@@ -288,9 +288,10 @@ async function loadStateFromSupabase() {
     render();
     els.uploadStatus.textContent = "Supabase 数据库资料已载入。";
     els.uploadStatus.className = "upload-status ready";
-  } catch {
-    els.uploadStatus.textContent = "Supabase 读取失败。请检查环境变量和 Supabase table。";
+  } catch (error) {
+    els.uploadStatus.textContent = `Supabase 读取失败：${error.message || "请检查环境变量和 Supabase table。"}`;
     els.uploadStatus.className = "upload-status warning";
+    setAuthWarning(error.message || "Supabase 读取失败。");
   }
 }
 
@@ -309,8 +310,8 @@ async function saveStateToSupabase() {
       replaceSupabaseTable("inventory", inventoryRowsFromState()),
       upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })])
     ]);
-  } catch {
-    els.uploadStatus.textContent = "Supabase 保存失败。请检查网络、URL、ANON KEY 和 RLS policy。";
+  } catch (error) {
+    els.uploadStatus.textContent = `Supabase 保存失败：${error.message || "请检查网络、URL、ANON KEY 和 RLS policy。"}`;
     els.uploadStatus.className = "upload-status warning";
   }
 }
@@ -318,7 +319,10 @@ async function saveStateToSupabase() {
 async function ensureSupabaseConfig() {
   if (supabaseConfig) return supabaseConfig;
   const response = await fetch("/api/supabase-config");
-  supabaseConfig = await response.json();
+  supabaseConfig = await readJsonResponse(response, "/api/supabase-config");
+  if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
+    throw new Error("/api/supabase-config 没有回传 SUPABASE_URL 或 SUPABASE_ANON_KEY。请检查 .env 和 Vercel 环境变量。");
+  }
   return supabaseConfig;
 }
 
@@ -332,7 +336,7 @@ async function authRequest(path, body) {
     },
     body: JSON.stringify(body)
   });
-  const payload = await response.json().catch(() => ({}));
+  const payload = await readJsonResponse(response, `Supabase Auth ${path}`);
   if (!response.ok) throw new Error(payload.error_description || payload.msg || payload.message || "Supabase Auth 请求失败。");
   return payload;
 }
@@ -403,6 +407,7 @@ function setAuthSession(payload) {
 
 function updateAuthUi() {
   const loggedIn = Boolean(authSession?.access_token);
+  document.body.classList.toggle("is-authenticated", loggedIn);
   els.loginBtn.hidden = loggedIn;
   els.signupBtn.hidden = loggedIn;
   els.logoutBtn.hidden = !loggedIn;
@@ -444,7 +449,28 @@ async function supabaseRequest(path, options = {}) {
   });
   if (!response.ok) throw new Error(await response.text());
   if (response.status === 204) return null;
-  return response.json();
+  return readJsonResponse(response, `Supabase REST ${path}`);
+}
+
+async function readJsonResponse(response, label) {
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(`${label} 回传的不是 JSON：${summarizeClientText(text)}`);
+  }
+  try {
+    return JSON.parse(text || "{}");
+  } catch {
+    throw new Error(`${label} 回传了无法解析的 JSON：${summarizeClientText(text)}`);
+  }
+}
+
+function summarizeClientText(text) {
+  return String(text || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160) || "空内容";
 }
 
 async function replaceSupabaseTable(table, rows) {
@@ -675,13 +701,14 @@ function setRuleSaved(message) {
 
 async function refreshConfigStatus() {
   try {
-    const config = await fetch("/api/config").then((response) => response.json());
+    const configResponse = await fetch("/api/config");
+    const config = await readJsonResponse(configResponse, "/api/config");
     els.apiKeyStatus.textContent = config.hasApiKey
       ? `OCR 已连接，模型：${config.model}`
       : "还没有保存 OpenAI API Key。";
     els.apiKeyStatus.className = config.hasApiKey ? "ready" : "warning";
-  } catch {
-    els.apiKeyStatus.textContent = "无法连接 OCR 后端。";
+  } catch (error) {
+    els.apiKeyStatus.textContent = `无法连接 OCR 后端：${error.message || "请检查 API route。"}`;
     els.apiKeyStatus.className = "warning";
   }
 }
@@ -703,7 +730,7 @@ async function saveApiKey() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey, model: "gpt-5.5" })
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse(response, "/api/config");
     if (!response.ok) throw new Error(payload.error || "保存失败。");
     els.apiKeyInput.value = "";
     els.apiKeyStatus.textContent = `Key 已保存，OCR 已连接，模型：${payload.model}`;
@@ -842,7 +869,7 @@ async function recognizeUploadedFile() {
       method: "POST",
       body: formData
     });
-    const payload = await readJsonResponse(response);
+    const payload = await readJsonResponse(response, "/api/ocr");
 
     if (!response.ok) {
       throw new Error(payload.error || "OCR 识别失败。");
@@ -885,18 +912,6 @@ async function recognizeUploadedFile() {
   } finally {
     analyzeBtn.disabled = false;
     analyzeBtn.textContent = originalText;
-  }
-}
-
-async function readJsonResponse(response) {
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    const plainText = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    throw new Error(plainText
-      ? `服务器没有返回 OCR 资料：${plainText.slice(0, 160)}`
-      : "服务器没有返回 OCR 资料。请确认本地服务器正在运行。");
   }
 }
 
