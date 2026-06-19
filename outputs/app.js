@@ -253,8 +253,7 @@ function mergeDefaultRules(savedRules, defaultRules) {
 }
 
 function saveState() {
-  saveStateToSupabase();
-  return Boolean(supabaseConfig?.url && supabaseConfig?.anonKey && authSession?.access_token);
+  return saveStateToSupabase();
 }
 
 async function loadStateFromSupabase() {
@@ -302,11 +301,11 @@ async function loadStateFromSupabase() {
 async function saveStateToSupabase() {
   try {
     await ensureSupabaseConfig();
-    if (!supabaseConfig?.url || !supabaseConfig?.anonKey) return;
+    if (!supabaseConfig?.url || !supabaseConfig?.anonKey) return false;
     if (!authSession?.access_token) {
       els.uploadStatus.textContent = "请先登录，资料才会保存到 Supabase。";
       els.uploadStatus.className = "upload-status warning";
-      return;
+      return false;
     }
     await replaceSupabaseTable("suppliers", supplierRowsFromState());
     await Promise.all([
@@ -314,9 +313,11 @@ async function saveStateToSupabase() {
       replaceSupabaseTable("inventory", inventoryRowsFromState()),
       upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })])
     ]);
+    return true;
   } catch (error) {
     els.uploadStatus.textContent = `Supabase 保存失败：${error.message || "请检查网络、URL、ANON KEY 和 RLS policy。"}`;
     els.uploadStatus.className = "upload-status warning";
+    return false;
   }
 }
 
@@ -1044,7 +1045,7 @@ function clearPendingRecord() {
   updateRepaymentMatchPanel();
 }
 
-function savePendingRecord() {
+async function savePendingRecord() {
   const backupRecord = pendingRecord || readRecordFromRenderedResult() || buildManualRepaymentRecord();
   if (!backupRecord) {
     setSaveButtonsVisible(false);
@@ -1067,21 +1068,35 @@ function savePendingRecord() {
   }
   lastSaveSnapshot = structuredClone(state);
   recordParsedDocument(record);
-  const persisted = saveState();
   render();
+  setSaveButtonsBusy(true);
+  els.uploadStatus.textContent = "正在保存到 Supabase...";
+  els.uploadStatus.className = "upload-status ready";
+  const persisted = await saveState();
+  setSaveButtonsBusy(false);
+  if (!persisted) {
+    state = structuredClone(lastSaveSnapshot);
+    lastSaveSnapshot = null;
+    render();
+    setUndoButtonsVisible(false);
+    els.resultBox.innerHTML = `
+      <div class="notice-box">
+        <strong>保存失败</strong>
+        <p>这笔记录没有写入 Supabase，所以其他手机或电脑不会看到。请检查网络、登录状态和 Supabase RLS policy。</p>
+      </div>`;
+    return;
+  }
   clearPendingRecord();
   setUndoButtonsVisible(true);
   activateTab(record.type === "supplier_invoice" || record.type === "settlement_statement" ? "invoices" : record.type === "income" ? "incomes" : record.type === "payment_proof" ? "payments" : "expenses");
   els.detectedType.textContent = "已保存";
   els.resultBox.innerHTML = `
     <div class="notice-box success">
-      <strong>记录已保存</strong>
-      <p>${typeLabel(record.type)} 已经进入下面的记录表。可以上传下一张凭证。</p>
+      <strong>记录已保存到 Supabase</strong>
+      <p>${typeLabel(record.type)} 已经进入下面的记录表。其他设备用同一个 Email 登录后刷新就会看到。</p>
     </div>`;
-  els.uploadStatus.textContent = persisted
-    ? "记录已保存。"
-    : "记录已保存到当前页面，但浏览器储存暂时不可用。请先不要刷新。";
-  els.uploadStatus.className = persisted ? "upload-status ready" : "upload-status warning";
+  els.uploadStatus.textContent = "记录已保存到 Supabase。";
+  els.uploadStatus.className = "upload-status ready";
 }
 
 function readRecordFromRenderedResult() {
@@ -1192,23 +1207,34 @@ function parseRenderedMoney(value) {
   return toMoney(number || 0);
 }
 
-function undoLastSave() {
+async function undoLastSave() {
   if (!lastSaveSnapshot) return;
+  const currentSnapshot = structuredClone(state);
   state = structuredClone(lastSaveSnapshot);
   lastSaveSnapshot = null;
-  const persisted = saveState();
   render();
+  const persisted = await saveState();
+  if (!persisted) {
+    state = currentSnapshot;
+    render();
+    els.uploadStatus.textContent = "撤销失败：Supabase 没有保存成功，资料已恢复到撤销前。";
+    els.uploadStatus.className = "upload-status warning";
+    return;
+  }
   updateRepaymentMatchPanel();
   setUndoButtonsVisible(false);
-  els.uploadStatus.textContent = persisted
-    ? "已撤销上一次保存。"
-    : "已撤销当前页面的上一次保存，但浏览器储存暂时不可用。";
-  els.uploadStatus.className = persisted ? "upload-status ready" : "upload-status warning";
+  els.uploadStatus.textContent = "已撤销上一次保存，并同步到 Supabase。";
+  els.uploadStatus.className = "upload-status ready";
 }
 
 function setSaveButtonsVisible(isVisible) {
   els.saveRecordBtn.hidden = !isVisible;
   els.saveRecordReviewBtn.hidden = !isVisible;
+}
+
+function setSaveButtonsBusy(isBusy) {
+  els.saveRecordBtn.disabled = isBusy;
+  els.saveRecordReviewBtn.disabled = isBusy;
 }
 
 function setUndoButtonsVisible(isVisible) {
