@@ -312,11 +312,9 @@ async function saveStateToSupabase() {
       return false;
     }
     await replaceSupabaseTable("suppliers", supplierRowsFromState());
-    await Promise.all([
-      replaceSupabaseTable("invoices", state.invoices.map(invoiceToRow)),
-      replaceSupabaseTable("inventory", inventoryRowsFromState()),
-      upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })])
-    ]);
+    await replaceSupabaseTable("invoices", state.invoices.map(invoiceToRow));
+    await replaceSupabaseTable("inventory", inventoryRowsFromState());
+    await upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })]);
     return true;
   } catch (error) {
     lastSupabaseSaveError = error.message || "未知 Supabase 保存错误。";
@@ -547,7 +545,8 @@ async function restorePersistedAuthSession() {
 
 async function supabaseRequest(path, options = {}) {
   await ensureSupabaseConfig();
-  const response = await fetch(`${supabaseConfig.url}/rest/v1${path}`, {
+  const method = options.method || "GET";
+  const response = await fetchWithRetry(`${supabaseConfig.url}/rest/v1${path}`, {
     ...options,
     headers: {
       apikey: supabaseConfig.anonKey,
@@ -555,10 +554,27 @@ async function supabaseRequest(path, options = {}) {
       "Content-Type": "application/json",
       ...(options.headers || {})
     }
-  });
+  }, `Supabase REST ${method} ${path}`);
   if (!response.ok) throw new Error(await response.text());
   if (response.status === 204) return null;
   return readJsonResponse(response, `Supabase REST ${path}`, { allowEmpty: true });
+}
+
+async function fetchWithRetry(url, options, label) {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await wait(450 * attempt);
+    }
+  }
+  throw new Error(`${label} 连接失败：${lastError?.message || "Load failed"}`);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function readJsonResponse(response, label, options = {}) {
@@ -1453,8 +1469,19 @@ function limitReceiptPreview(dataUrl) {
 }
 
 function invoiceMetadataForSupabase(invoice) {
-  const { receiptImage, receiptImages, ...metadata } = invoice;
-  return metadata;
+  return {
+    id: invoice.id,
+    type: invoice.type,
+    supplier: invoice.supplier,
+    invoiceNo: invoice.invoiceNo,
+    date: invoice.date,
+    total: invoice.total,
+    paid: invoice.paid,
+    status: invoice.status,
+    items: invoice.items || [],
+    receiptFileNames: invoice.receiptFileNames || (invoice.receiptFileName ? [invoice.receiptFileName] : []),
+    settlementStatement: invoice.settlementStatement || null
+  };
 }
 
 function normalizeOcrPayload(payload) {
