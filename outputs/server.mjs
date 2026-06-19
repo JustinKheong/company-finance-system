@@ -31,7 +31,9 @@ createServer(async (req, res) => {
     if (req.method === "GET" && pathname === "/api/config") {
       sendJson(res, 200, {
         hasApiKey: hasUsableApiKey(),
-        model
+        model,
+        canSaveApiKey: true,
+        runtime: "local"
       });
       return;
     }

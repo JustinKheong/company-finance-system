@@ -62,6 +62,7 @@ let lastSaveSnapshot = null;
 let settlementDraft = null;
 let supabaseConfig = null;
 let authSession = null;
+let canSaveApiKey = true;
 
 const els = {
   cashInput: document.querySelector("#cashInput"),
@@ -703,9 +704,14 @@ async function refreshConfigStatus() {
   try {
     const configResponse = await fetch("/api/config");
     const config = await readJsonResponse(configResponse, "/api/config");
+    canSaveApiKey = config.canSaveApiKey !== false;
+    els.saveApiKeyBtn.disabled = !canSaveApiKey;
+    els.apiKeyInput.disabled = !canSaveApiKey;
     els.apiKeyStatus.textContent = config.hasApiKey
       ? `OCR 已连接，模型：${config.model}`
-      : "还没有保存 OpenAI API Key。";
+      : canSaveApiKey
+        ? "还没有保存 OpenAI API Key。"
+        : "线上 Vercel 还没有设置 OPENAI_API_KEY。请去 Vercel Project Settings > Environment Variables 添加后重新部署。";
     els.apiKeyStatus.className = config.hasApiKey ? "ready" : "warning";
   } catch (error) {
     els.apiKeyStatus.textContent = `无法连接 OCR 后端：${error.message || "请检查 API route。"}`;
@@ -714,6 +720,11 @@ async function refreshConfigStatus() {
 }
 
 async function saveApiKey() {
+  if (!canSaveApiKey) {
+    els.apiKeyStatus.textContent = "线上 Vercel 不能从网页保存 OpenAI API Key。请在 Vercel Environment Variables 设置 OPENAI_API_KEY 后重新部署。";
+    els.apiKeyStatus.className = "warning";
+    return;
+  }
   const apiKey = els.apiKeyInput.value.trim();
   if (!apiKey) {
     els.apiKeyStatus.textContent = "请先粘贴 OpenAI API Key。";

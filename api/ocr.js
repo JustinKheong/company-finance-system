@@ -15,7 +15,9 @@ export default async function handler(req, res) {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey || apiKey === "sk-your-key-here") {
-      res.status(500).json({ error: "OPENAI_API_KEY is not set." });
+      res.status(500).json({
+        error: "OPENAI_API_KEY is not set in Vercel Environment Variables. Add OPENAI_API_KEY, then redeploy."
+      });
       return;
     }
 
