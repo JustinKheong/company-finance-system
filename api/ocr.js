@@ -81,7 +81,7 @@ function buildOpenAIRequest(direction, dataUrls) {
 }
 
 function promptForDirection(direction) {
-  if (direction === "income") return "Read this income proof. Return payer, date, reference, amount. Dates YYYY-MM-DD. JSON only.";
+  if (direction === "income") return "Read this income proof, bank deposit screen, or transaction history. If multiple rows are visible, extract every row in transactions and return type transaction_batch. For each row return date, description, reference, amount, and direction income/expense/repayment. Use income for positive/credit/deposit rows and expense for debit/payment rows. Dates YYYY-MM-DD. JSON only.";
   if (direction === "repayment") return "Read this payment proof. Return recipient, date, reference, amount. Dates YYYY-MM-DD. JSON only.";
   if (direction === "expense") return "Read this expense or bank/e-wallet transaction history. If multiple outgoing rows are visible, return every row in expenses. Use rightmost negative RM amounts as positive amounts. Dates YYYY-MM-DD. JSON only.";
   if (direction === "settlement") return "Read this settlement spreadsheet. Left side is Snackfactorie Enterprise goods, right side is Pasar Mini Zai Hin goods, bottom/right amount is owedAmount. Dates YYYY-MM-DD. JSON only.";
@@ -90,11 +90,21 @@ function promptForDirection(direction) {
 
 function schemaForDirection(direction) {
   if (direction === "income") return objectSchema("income_ocr", {
-    type: { type: "string", enum: ["income"] },
+    type: { type: "string", enum: ["income", "transaction_batch"] },
     payer: nullableString(),
     date: nullableString(),
     reference: nullableString(),
     amount: { type: "number" },
+    transactions: {
+      type: "array",
+      items: objectShape({
+        date: nullableString(),
+        description: nullableString(),
+        reference: nullableString(),
+        amount: { type: "number" },
+        direction: { type: "string", enum: ["income", "expense", "repayment"] }
+      })
+    },
     rawText: nullableString()
   });
   if (direction === "repayment") return objectSchema("repayment_ocr", {

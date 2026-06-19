@@ -243,9 +243,10 @@ function supplierInvoicePrompt() {
 
 function incomePrompt() {
   return [
-    "Read the uploaded income or payment received proof image or images for a Malaysian small business finance system.",
-    "If there are two images, combine visible details from both images into one record.",
-    "Return payer/customer, date, reference number, and amount received.",
+    "Read the uploaded income proof, bank deposit screen, or transaction history image for a Malaysian small business finance system.",
+    "If the image shows multiple transaction rows, extract every visible row and return type transaction_batch.",
+    "For each row, return description/payee, date, reference number, amount, and direction. Use income for positive/credit/deposit rows and expense for negative/debit/payment rows.",
+    "If the image shows only one income transaction, type may be income.",
     "Dates must be YYYY-MM-DD. Amounts must be numbers without currency symbols.",
     "If a field is not visible, use null for strings and 0 for numbers."
   ].join(" ");
@@ -332,14 +333,29 @@ function incomeSchema() {
       type: "object",
       additionalProperties: false,
       properties: {
-        type: { type: "string", enum: ["income"] },
+        type: { type: "string", enum: ["income", "transaction_batch"] },
         payer: { type: ["string", "null"] },
         date: { type: ["string", "null"] },
         reference: { type: ["string", "null"] },
         amount: { type: "number" },
+        transactions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              date: { type: ["string", "null"] },
+              description: { type: ["string", "null"] },
+              reference: { type: ["string", "null"] },
+              amount: { type: "number" },
+              direction: { type: "string", enum: ["income", "expense", "repayment"] }
+            },
+            required: ["date", "description", "reference", "amount", "direction"]
+          }
+        },
         rawText: { type: ["string", "null"] }
       },
-      required: ["type", "payer", "date", "reference", "amount", "rawText"]
+      required: ["type", "payer", "date", "reference", "amount", "transactions", "rawText"]
     }
   };
 }

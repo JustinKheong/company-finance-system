@@ -1127,7 +1127,7 @@ async function savePendingRecord() {
   }
   clearPendingRecord();
   setUndoButtonsVisible(true);
-  activateTab(record.type === "supplier_invoice" || record.type === "settlement_statement" ? "invoices" : record.type === "income" ? "incomes" : record.type === "payment_proof" ? "payments" : "expenses");
+  activateTab(record.type === "supplier_invoice" || record.type === "settlement_statement" ? "invoices" : ["income", "transaction_batch"].includes(record.type) ? "incomes" : record.type === "payment_proof" ? "payments" : "expenses");
   els.detectedType.textContent = "已保存";
   els.resultBox.innerHTML = `
     <div class="notice-box success">
@@ -1500,6 +1500,16 @@ function invoiceMetadataForSupabase(invoice) {
 }
 
 function normalizeOcrPayload(payload) {
+  if (payload.type === "transaction_batch" || Array.isArray(payload.transactions)) {
+    const transactions = normalizeTransactionItems(payload.transactions);
+    return {
+      type: "transaction_batch",
+      date: payload.date || dateRangeLabel(transactions),
+      amount: transactions.reduce((sum, item) => sum + item.amount, 0),
+      transactions
+    };
+  }
+
   if (payload.type === "personal_expenses_batch") {
     const expenses = normalizeExpenseItems(payload.expenses);
     return {
@@ -1577,6 +1587,16 @@ function normalizeOcrPayload(payload) {
   };
 }
 
+function normalizeTransactionItems(items) {
+  return Array.isArray(items) ? items.map((item) => applyIncomeRuleToTransaction({
+    date: item.date || new Date().toISOString().slice(0, 10),
+    description: item.description || item.payer || item.merchant || item.recipient || "Unknown Transaction",
+    reference: item.reference || item.ref || "-",
+    amount: toMoney(item.amount),
+    direction: ["income", "expense", "repayment"].includes(item.direction) ? item.direction : "income"
+  })).filter((item) => item.amount > 0) : [];
+}
+
 function normalizeExpenseItems(items) {
   return Array.isArray(items) ? items.map((item) => ({
     merchant: item.merchant || "Unknown Merchant",
@@ -1621,9 +1641,16 @@ function parseDocument(text, direction = "auto") {
 function applyTransactionRules(parsed, sourceText = "") {
   const haystack = normalizeSearch(`${sourceText} ${Object.values(parsed).join(" ")}`);
 
+  if (parsed.type === "transaction_batch") {
+    return {
+      ...parsed,
+      transactions: parsed.transactions.map(applyIncomeRuleToTransaction)
+    };
+  }
+
   if (parsed.type === "income") {
     const rule = state.incomeRules.find((item) => haystack.includes(normalizeSearch(item.match)));
-    return rule ? { ...parsed, payer: rule.source } : parsed;
+    return rule ? { ...parsed, payer: rule.source } : applyIncomeRuleToTransaction(parsed);
   }
 
   if (parsed.type === "personal_expenses_batch") {
@@ -1661,6 +1688,14 @@ function applyTransactionRules(parsed, sourceText = "") {
   }
 
   return parsed;
+}
+
+function applyIncomeRuleToTransaction(transaction) {
+  const haystack = normalizeSearch(`${transaction.description || ""} ${transaction.payer || ""} ${transaction.reference || ""}`);
+  const rule = state.incomeRules.find((item) => haystack.includes(normalizeSearch(item.match)));
+  if (!rule) return transaction;
+  if (transaction.type === "income") return { ...transaction, payer: rule.source };
+  return { ...transaction, description: rule.source };
 }
 
 function applyExpenseRule(expense) {
@@ -1940,6 +1975,20 @@ function recordParsedDocument(parsed) {
       }
     });
   }
+  if (parsed.type === "transaction_batch") {
+    applyTransactionBatchDestinations(parsed);
+    parsed.transactions.forEach((transaction) => {
+      if (transaction.destination === "expense") {
+        state.expenses.push(transactionToExpense(transaction));
+      } else if (transaction.destination === "repayment") {
+        applyPayment(transactionToPayment(transaction));
+      } else {
+        const income = transactionToIncome(transaction);
+        state.incomes.push(income);
+        state.cashOnHand = toMoney(state.cashOnHand + income.amount);
+      }
+    });
+  }
   if (parsed.type === "payment_proof") {
     applyPayment(parsed);
   }
@@ -1979,6 +2028,52 @@ function applyExpenseBatchDestinations(record) {
       destination: select?.value || expense.destination || "personal"
     };
   });
+}
+
+function applyTransactionBatchDestinations(record) {
+  if (record.type !== "transaction_batch") return;
+  record.transactions = record.transactions.map((transaction, index) => {
+    const select = els.resultBox.querySelector(`[data-transaction-destination="${index}"]`);
+    return {
+      ...transaction,
+      destination: select?.value || transaction.direction || "income"
+    };
+  });
+}
+
+function transactionToIncome(transaction) {
+  const normalized = applyIncomeRuleToTransaction(transaction);
+  return {
+    id: crypto.randomUUID(),
+    type: "income",
+    payer: normalized.description || "Unknown Payer",
+    date: normalized.date || new Date().toISOString().slice(0, 10),
+    reference: normalized.reference || "-",
+    amount: toMoney(normalized.amount)
+  };
+}
+
+function transactionToExpense(transaction) {
+  return applyExpenseRule({
+    id: crypto.randomUUID(),
+    type: "personal_expenses",
+    merchant: transaction.description || "Unknown Merchant",
+    date: transaction.date || new Date().toISOString().slice(0, 10),
+    category: categorizeExpense(transaction.description || ""),
+    amount: toMoney(transaction.amount),
+    note: transaction.reference || ""
+  });
+}
+
+function transactionToPayment(transaction) {
+  return {
+    type: "payment_proof",
+    recipient: transaction.description || "Unknown Recipient",
+    date: transaction.date || new Date().toISOString().slice(0, 10),
+    reference: transaction.reference || "-",
+    amount: toMoney(transaction.amount),
+    matchedInvoiceId: null
+  };
 }
 
 function expenseToMaterialInvoice(expense) {
@@ -2331,6 +2426,10 @@ function renderResult(parsed) {
     renderExpenseBatchResult(parsed);
     return;
   }
+  if (parsed.type === "transaction_batch") {
+    renderTransactionBatchResult(parsed);
+    return;
+  }
   const fields = Object.entries(parsed)
     .filter(([key]) => !["items", "type", "id", "matchedInvoiceId", "receiptImage", "receiptImages"].includes(key))
     .filter(([key]) => !(key === "receiptFileName" && Array.isArray(parsed.receiptFileNames) && parsed.receiptFileNames.length))
@@ -2340,6 +2439,42 @@ function renderResult(parsed) {
     ? `<div class="line-items"><h3>产品明细</h3><div class="table-wrap"><table><thead><tr><th>产品</th><th>数量</th><th>单价</th><th>总额</th></tr></thead><tbody>${parsed.items.map((item) => `<tr><td>${escapeHtml(item.product)}</td><td>${item.qty}</td><td>${formatMoney(item.unitPrice)}</td><td>${formatMoney(item.total)}</td></tr>`).join("")}</tbody></table></div></div>`
     : "";
   els.resultBox.innerHTML = `<div class="summary-grid">${fields}</div>${items}`;
+}
+
+function renderTransactionBatchResult(parsed) {
+  const rows = parsed.transactions?.length
+    ? parsed.transactions.map((transaction, index) => `
+      <tr>
+        <td>${escapeHtml(transaction.date)}</td>
+        <td>${escapeHtml(transaction.description)}</td>
+        <td>${escapeHtml(transaction.reference || "-")}</td>
+        <td class="money">${formatMoney(transaction.amount)}</td>
+        <td>
+          <select class="destination-select" data-transaction-destination="${index}">
+            <option value="income" ${transaction.direction === "income" ? "selected" : ""}>进账</option>
+            <option value="expense" ${transaction.direction === "expense" ? "selected" : ""}>个人支出</option>
+            <option value="repayment" ${transaction.direction === "repayment" ? "selected" : ""}>还账</option>
+          </select>
+        </td>
+      </tr>`).join("")
+    : `<tr><td colspan="5">暂无明细</td></tr>`;
+
+  els.resultBox.innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-item"><span>类型</span><strong>多笔交易</strong></div>
+      <div class="summary-item"><span>笔数</span><strong>${parsed.transactions?.length || 0}</strong></div>
+      <div class="summary-item"><span>总金额</span><strong>${formatMoney(parsed.amount)}</strong></div>
+      <div class="summary-item"><span>日期范围</span><strong>${escapeHtml(parsed.date)}</strong></div>
+    </div>
+    <div class="line-items">
+      <h3>交易明细</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期</th><th>说明</th><th>Reference</th><th>金额</th><th>保存去向</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
 function renderExpenseBatchResult(parsed) {
@@ -2485,6 +2620,12 @@ function currentMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
+function dateRangeLabel(records) {
+  const dates = records.map((record) => record.date).filter(Boolean).sort();
+  if (!dates.length) return new Date().toISOString().slice(0, 10);
+  return dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} - ${dates[dates.length - 1]}`;
+}
+
 function filterByMonth(records, dateKey) {
   return records.filter((record) => monthFromDate(record?.[dateKey]) === selectedMonth);
 }
@@ -2501,6 +2642,7 @@ function typeLabel(type) {
     supplier_invoice: "Supplier Invoice",
     personal_expenses: "个人支出",
     personal_expenses_batch: "多笔个人支出",
+    transaction_batch: "多笔交易",
     payment_proof: "Payment Proof",
     settlement_statement: "对账 PDF"
   })[type] || "等待识别";

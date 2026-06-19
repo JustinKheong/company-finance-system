@@ -294,7 +294,7 @@
           <section class="rules-section">
             <div class="rules-head">
               <h3>进账来源规则</h3>
-              <p>OCR 看到指定字眼时，自动标注为 Lazada、Shopee 或其他来源。</p>
+              <p>OCR 看到指定字眼时，自动换成你想要的进账名字。</p>
             </div>
             <div class="rule-form">
               <label class="search-field">
@@ -302,14 +302,14 @@
                 <input id="incomeRuleMatchInput" type="text" placeholder="IBG Credit" />
               </label>
               <label class="search-field">
-                <span>标注来源</span>
+                <span>改成名字</span>
                 <input id="incomeRuleSourceInput" type="text" placeholder="Lazada" />
               </label>
               <button id="addIncomeRuleBtn" class="secondary-btn" type="button">新增规则</button>
             </div>
             <div class="table-wrap rules-table-wrap">
               <table class="rules-table">
-                <thead><tr><th>看到字眼</th><th>标注来源</th><th>操作</th></tr></thead>
+                <thead><tr><th>看到字眼</th><th>改成名字</th><th>操作</th></tr></thead>
                 <tbody id="incomeRuleRows"></tbody>
               </table>
             </div>
