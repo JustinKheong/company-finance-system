@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>公司财务和库存管理系统</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Finance + Inventory</p>
+          <h1>公司财务和库存管理系统</h1>
+        </div>
+        <div class="top-actions">
+          <label class="balance-control">
+            <span>账上余额</span>
+            <input id="cashInput" type="number" min="0" step="0.01" />
+          </label>
+          <button id="exportBtn" class="icon-btn" type="button" aria-label="导出 JSON" title="导出 JSON">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" /></svg>
+          </button>
+          <button id="resetBtn" class="icon-btn ghost" type="button" aria-label="重置数据" title="重置数据">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v6h6" /></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="dashboard-grid" aria-label="Dashboard">
+        <article class="metric cash">
+          <span>账上的钱</span>
+          <strong id="cashMetric">RM 0.00</strong>
+        </article>
+        <article class="metric payable">
+          <span>需要支出的钱</span>
+          <strong id="payableMetric">RM 0.00</strong>
+        </article>
+        <article class="metric spent">
+          <span>已经支出的钱</span>
+          <strong id="spentMetric">RM 0.00</strong>
+        </article>
+        <article class="metric company-expense">
+          <span>个人支出</span>
+          <strong id="companyExpenseMetric">RM 0.00</strong>
+        </article>
+        <article class="metric available">
+          <span>剩余可用钱</span>
+          <strong id="availableMetric">RM 0.00</strong>
+        </article>
+      </section>
+
+      <section class="workspace-grid">
+        <article class="upload-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">AI / OCR</p>
+              <h2>上传凭证</h2>
+            </div>
+            <span id="detectedType" class="status-pill">等待识别</span>
+          </div>
+
+          <label class="dropzone" for="fileInput">
+            <input id="fileInput" type="file" accept="image/*,.pdf" multiple />
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3" /></svg>
+            <span id="fileLabel">选择 1-2 张 Invoice、收据、转账截图或现金支出照片</span>
+          </label>
+          <p id="uploadStatus" class="upload-status">上传后请选择进账、出账或还账；识别完成后再按保存记录。</p>
+
+          <div class="api-key-panel">
+            <label class="api-key-field">
+              <span>OpenAI API Key</span>
+              <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off" />
+            </label>
+            <button id="saveApiKeyBtn" class="secondary-btn" type="button">保存 Key</button>
+            <p id="apiKeyStatus">正在检查 OCR 设置...</p>
+          </div>
+
+          <div class="preview-wrap">
+            <img id="imagePreview" alt="凭证预览" hidden />
+            <div id="emptyPreview" class="empty-preview">
+              <div class="paper-visual">
+                <span></span><span></span><span></span><strong></strong>
+              </div>
+            </div>
+          </div>
+
+          <fieldset class="direction-control" aria-label="交易方向">
+            <legend>这张凭证是</legend>
+            <div class="segmented-control">
+              <button class="segment-button" data-direction="income" type="button">进账</button>
+              <button class="segment-button active" data-direction="outgoing" type="button">出账</button>
+              <button class="segment-button" data-direction="repayment" type="button">还账</button>
+              <button class="segment-button" data-direction="expense" type="button">个人支出</button>
+              <button class="segment-button" data-direction="settlement" type="button">对账 PDF</button>
+            </div>
+          </fieldset>
+
+          <div id="repaymentMatchPanel" class="repayment-match-panel" hidden>
+            <label class="search-field">
+              <span>这笔还账是还给哪家公司 / 哪张 Invoice</span>
+              <select id="repaymentInvoiceSelect"></select>
+            </label>
+            <p id="repaymentMatchStatus">识别后可以选择要匹配的未付款 Invoice。</p>
+          </div>
+
+          <details id="ocrDetails" class="ocr-details">
+            <summary>OCR 原文 / AI 返回结果</summary>
+            <label class="text-field">
+              <span>系统接上 OCR 后会自动填这里，现在可先手动贴文字测试</span>
+              <textarea id="ocrText" rows="8" placeholder="例如：Invoice INV-1005&#10;Supplier: ABC Trading&#10;Date: 2026-06-10&#10;Product A 10 8.50 85.00&#10;Total RM 85.00"></textarea>
+            </label>
+          </details>
+
+          <div class="button-row">
+            <button id="analyzeBtn" type="button" class="primary-btn">识别</button>
+            <button id="saveRecordBtn" type="button" class="primary-btn save-record" hidden>保存记录</button>
+            <button id="undoSaveBtn" type="button" class="secondary-btn" hidden>撤销上一次保存</button>
+          </div>
+        </article>
+
+        <article class="review-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Review</p>
+              <h2>识别结果</h2>
+            </div>
+            <div class="review-actions">
+              <button id="saveRecordReviewBtn" type="button" class="primary-btn save-record" hidden>保存记录</button>
+              <button id="undoSaveReviewBtn" type="button" class="secondary-btn" hidden>撤销</button>
+              <button id="generatePdfBtn" type="button" class="primary-btn" hidden>生成 PDF</button>
+            </div>
+          </div>
+          <div id="resultBox" class="result-box">
+            <p>暂无识别结果</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="tabs" aria-label="记录">
+        <div class="tab-list" role="tablist">
+          <button class="tab-button active" data-tab="invoices" type="button">待付款 Invoice</button>
+          <button class="tab-button" data-tab="incomes" type="button">进账记录</button>
+          <button class="tab-button" data-tab="expenses" type="button">个人支出</button>
+          <button class="tab-button" data-tab="payments" type="button">付款证明</button>
+          <button class="tab-button" data-tab="inventory" type="button">Inventory</button>
+          <button class="tab-button" data-tab="rules" type="button">规则设定</button>
+        </div>
+
+        <div id="invoices" class="tab-panel active">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Supplier</th><th>Invoice</th><th>日期</th><th>金额</th><th>已付</th><th>状态</th><th>单据</th></tr></thead>
+              <tbody id="invoiceRows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="incomes" class="tab-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>付款人</th><th>Reference</th><th>金额</th></tr></thead>
+              <tbody id="incomeRows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="expenses" class="tab-panel">
+          <section class="rules-section">
+            <div class="rules-head">
+              <h3>个人支出分类规则</h3>
+              <p>扫描到指定字眼时，自动变成你想要的分类名称。</p>
+            </div>
+            <div class="rule-form">
+              <label class="search-field">
+                <span>看到字眼</span>
+                <input id="expenseRuleMatchInput" type="text" placeholder="TNB / 水费 / Maxis" />
+              </label>
+              <label class="search-field">
+                <span>改成分类</span>
+                <input id="expenseRuleNameInput" type="text" placeholder="电费 / 水费 / 电话费" />
+              </label>
+              <button id="addExpenseRuleBtn" class="secondary-btn" type="button">新增规则</button>
+            </div>
+            <div class="table-wrap rules-table-wrap">
+              <table class="rules-table">
+                <thead><tr><th>看到字眼</th><th>分类</th><th>操作</th></tr></thead>
+                <tbody id="expenseRuleRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="expense-breakdown">
+            <div class="rules-head">
+              <h3>个人支出百分比</h3>
+              <p>每个分类占个人支出总额的比例，交通相关会分成汽油、维修、Toll 等细项。</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>分类</th><th>金额</th><th>百分比</th><th>比例</th></tr></thead>
+                <tbody id="expensePercentRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>Payee / Merchant（汇总）</th><th>分类</th><th>金额</th></tr></thead>
+              <tbody id="expenseRows"></tbody>
+            </table>
+          </div>
+          <section class="expense-breakdown">
+            <div class="rules-head">
+              <h3>Touch 'n Go 转账记录</h3>
+              <p>从银行转入 Touch 'n Go 的钱不计入个人支出，避免之后上传 Touch 'n Go 明细时重复计算。</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>日期</th><th>来源 / 收款人</th><th>Reference</th><th>金额</th></tr></thead>
+                <tbody id="walletTransferRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+        <div id="payments" class="tab-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>收款人</th><th>Reference</th><th>金额</th><th>匹配</th></tr></thead>
+              <tbody id="paymentRows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="inventory" class="tab-panel">
+          <div class="rename-rules">
+            <div class="rules-head">
+              <div>
+                <h3>产品命名规则</h3>
+                <p>OCR 看到指定字眼时，保存到 Inventory 前自动改成你要的名称。</p>
+              </div>
+            </div>
+            <div class="rule-form">
+              <label class="search-field">
+                <span>OCR 字眼</span>
+                <input id="ruleMatchInput" type="text" placeholder="HERBAL SOUP - COCONUT CHICKEN" />
+              </label>
+              <label class="search-field">
+                <span>改成产品名</span>
+                <input id="ruleNameInput" type="text" placeholder="椰子鸡汤" />
+              </label>
+              <button id="addRuleBtn" class="secondary-btn" type="button">新增规则</button>
+            </div>
+            <div class="table-wrap rules-table-wrap">
+              <table class="rules-table">
+                <thead><tr><th>OCR 字眼</th><th>产品名</th><th>操作</th></tr></thead>
+                <tbody id="renameRuleRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="inventory-toolbar">
+            <label class="search-field">
+              <span>搜索产品</span>
+              <input id="inventorySearch" type="search" placeholder="输入产品名字或 Supplier" autocomplete="off" />
+            </label>
+            <p id="inventorySearchStatus">显示全部产品</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>产品</th><th>最新成本</th><th>单一产品成本计算器</th><th>最新 Invoice 日期</th><th>Supplier</th></tr></thead>
+              <tbody id="inventoryRows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="rules" class="tab-panel">
+          <section class="rules-section">
+            <div class="rules-head">
+              <h3>进账来源规则</h3>
+              <p>OCR 看到指定字眼时，自动标注为 Lazada、Shopee 或其他来源。</p>
+            </div>
+            <div class="rule-form">
+              <label class="search-field">
+                <span>看到字眼</span>
+                <input id="incomeRuleMatchInput" type="text" placeholder="IBG Credit" />
+              </label>
+              <label class="search-field">
+                <span>标注来源</span>
+                <input id="incomeRuleSourceInput" type="text" placeholder="Lazada" />
+              </label>
+              <button id="addIncomeRuleBtn" class="secondary-btn" type="button">新增规则</button>
+            </div>
+            <div class="table-wrap rules-table-wrap">
+              <table class="rules-table">
+                <thead><tr><th>看到字眼</th><th>标注来源</th><th>操作</th></tr></thead>
+                <tbody id="incomeRuleRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="rules-section">
+            <div class="rules-head">
+              <h3>出账分类规则</h3>
+              <p>OCR 看到指定字眼时，自动决定是 Supplier Invoice，还是个人支出。</p>
+            </div>
+            <div class="rule-form outgoing-rule-form">
+              <label class="search-field">
+                <span>看到字眼</span>
+                <input id="outgoingRuleMatchInput" type="text" placeholder="水费 / TNB / Supplier 名字" />
+              </label>
+              <label class="search-field">
+                <span>去向</span>
+                <select id="outgoingRuleTargetInput">
+                  <option value="supplier_invoice">Supplier Invoice</option>
+                  <option value="personal_expenses">个人支出</option>
+                </select>
+              </label>
+              <label class="search-field">
+                <span>名称 / 分类</span>
+                <input id="outgoingRuleNameInput" type="text" placeholder="Supplier 名字 / 水费 / 电话费 / 租金" />
+              </label>
+              <button id="addOutgoingRuleBtn" class="secondary-btn" type="button">新增规则</button>
+            </div>
+            <div class="table-wrap rules-table-wrap">
+              <table class="rules-table">
+                <thead><tr><th>看到字眼</th><th>去向</th><th>名称 / 分类</th><th>操作</th></tr></thead>
+                <tbody id="outgoingRuleRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <dialog id="invoiceDialog" class="invoice-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">Invoice Detail</p>
+          <h2 id="invoiceDialogTitle">单据明细</h2>
+        </div>
+        <button id="closeInvoiceDialogBtn" class="icon-btn ghost" type="button" aria-label="关闭" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+      <div id="invoiceDialogBody"></div>
+    </dialog>
+    <script src="./app.js"></script>
+  </body>
+</html>
