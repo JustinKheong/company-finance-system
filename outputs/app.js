@@ -125,6 +125,7 @@ const els = {
   addOutgoingRuleBtn: document.querySelector("#addOutgoingRuleBtn"),
   outgoingRuleRows: document.querySelector("#outgoingRuleRows"),
   expenseRuleMatchInput: document.querySelector("#expenseRuleMatchInput"),
+  expenseRuleDisplayInput: document.querySelector("#expenseRuleDisplayInput"),
   expenseRuleNameInput: document.querySelector("#expenseRuleNameInput"),
   addExpenseRuleBtn: document.querySelector("#addExpenseRuleBtn"),
   expenseRuleRows: document.querySelector("#expenseRuleRows"),
@@ -808,18 +809,21 @@ function addOutgoingRule() {
 
 function addExpenseRule() {
   const match = els.expenseRuleMatchInput.value.trim();
-  const name = els.expenseRuleNameInput.value.trim();
-  if (!match || !name) {
-    setRuleWarning("请填写个人支出字眼和分类名称。");
+  const displayName = els.expenseRuleDisplayInput.value.trim();
+  const category = els.expenseRuleNameInput.value.trim();
+  if (!match || !displayName || !category) {
+    setRuleWarning("请填写个人支出字眼、新规则和分类名称。");
     return;
   }
   state.outgoingRules.push({
     id: crypto.randomUUID(),
     match,
     target: "personal_expenses",
-    name
+    displayName,
+    name: category
   });
   els.expenseRuleMatchInput.value = "";
+  els.expenseRuleDisplayInput.value = "";
   els.expenseRuleNameInput.value = "";
   reapplyExpenseRules();
   saveState();
@@ -1638,7 +1642,7 @@ function applyTransactionRules(parsed, sourceText = "") {
     if (rule.target === "personal_expenses") {
       return {
         type: "personal_expenses",
-        merchant: parsed.supplier || parsed.merchant || rule.name,
+        merchant: expenseRuleDisplayName(rule, parsed.supplier || parsed.merchant),
         date: parsed.date || new Date().toISOString().slice(0, 10),
         category: rule.name,
         amount: toMoney(parsed.total || parsed.amount || 0)
@@ -1662,7 +1666,11 @@ function applyTransactionRules(parsed, sourceText = "") {
 function applyExpenseRule(expense) {
   const haystack = normalizeSearch(`${expense.merchant} ${expense.category} ${expense.note || ""}`);
   const rule = state.outgoingRules.find((item) => item.target === "personal_expenses" && haystack.includes(normalizeSearch(item.match)));
-  return rule ? { ...expense, category: rule.name, merchant: rule.name } : expense;
+  return rule ? { ...expense, category: rule.name, merchant: expenseRuleDisplayName(rule, expense.merchant) } : expense;
+}
+
+function expenseRuleDisplayName(rule, fallback = "") {
+  return rule.displayName || rule.alias || fallback || rule.name || "其他";
 }
 
 function reapplyExpenseRules() {
@@ -2203,9 +2211,10 @@ function renderTables() {
   els.expenseRuleRows.innerHTML = rowsOrEmpty(expenseRules.map((rule) => `
     <tr>
       <td>${escapeHtml(rule.match)}</td>
+      <td>${escapeHtml(expenseRuleDisplayName(rule))}</td>
       <td>${escapeHtml(rule.name)}</td>
       <td><button class="delete-rule-btn" data-delete-expense-rule="${escapeHtml(rule.id)}" type="button">删除</button></td>
-    </tr>`), 3);
+    </tr>`), 4);
 
   els.incomeRuleRows.innerHTML = rowsOrEmpty(state.incomeRules.map((rule) => `
     <tr>
