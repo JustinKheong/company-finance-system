@@ -354,7 +354,7 @@ async function signInWithEmail() {
     setAuthSession(payload, { persist: els.rememberLoginInput.checked });
     await loadStateFromSupabase();
   } catch (error) {
-    setAuthWarning(error.message || "登录失败，请检查 Email 和 Password。");
+    setAuthWarning(loginErrorMessage(error));
   } finally {
     setAuthBusy(false);
   }
@@ -370,10 +370,10 @@ async function signUpWithEmail() {
       setAuthSession(payload, { persist: els.rememberLoginInput.checked });
       await loadStateFromSupabase();
     } else {
-      setAuthReady("注册成功。请去 Email 信箱确认后再登录。");
+      setAuthReady("注册成功。请去 Email 信箱确认账号，然后回到这里登录。");
     }
   } catch (error) {
-    setAuthWarning(error.message || "注册失败，请检查 Supabase Auth 设置。");
+    setAuthWarning(signupErrorMessage(error));
   } finally {
     setAuthBusy(false);
   }
@@ -442,6 +442,30 @@ function setAuthReady(message) {
 function setAuthWarning(message) {
   els.authStatus.textContent = message;
   els.authStatus.className = "warning";
+}
+
+function loginErrorMessage(error) {
+  const message = String(error?.message || "");
+  const normalized = message.toLowerCase();
+  if (normalized.includes("invalid login credentials")) {
+    return "登录失败：Email 或 Password 不正确。如果还没有账号，请先按“注册”。如果刚注册，请先去 Email 信箱确认账号。";
+  }
+  if (normalized.includes("email not confirmed")) {
+    return "登录失败：这个 Email 还没确认。请去信箱点击 Supabase confirmation link 后再登录。";
+  }
+  return message || "登录失败，请检查 Email 和 Password。";
+}
+
+function signupErrorMessage(error) {
+  const message = String(error?.message || "");
+  const normalized = message.toLowerCase();
+  if (normalized.includes("already registered") || normalized.includes("user already registered")) {
+    return "这个 Email 已经注册过了，请直接按“登录”。如果忘记密码，需要在 Supabase Auth 重设密码。";
+  }
+  if (normalized.includes("password")) {
+    return "注册失败：Password 至少需要 6 个字符，建议用比较长的密码。";
+  }
+  return message || "注册失败，请检查 Email、Password 或 Supabase Auth 设置。";
 }
 
 function normalizeAuthSession(payload) {
