@@ -298,6 +298,7 @@ async function loadStateFromSupabase() {
     });
     fixKnownUnknownSuppliers();
     rebuildInventoryFromInvoices();
+    reapplyIncomeRules();
     reapplyExpenseRules();
     render();
     els.uploadStatus.textContent = "Supabase 数据库资料已载入。";
@@ -770,6 +771,7 @@ function handleRuleTableClick(event) {
   if (outgoingButton) state.outgoingRules = state.outgoingRules.filter((rule) => rule.id !== outgoingButton.dataset.deleteOutgoingRule);
   if (expenseButton) state.outgoingRules = state.outgoingRules.filter((rule) => rule.id !== expenseButton.dataset.deleteExpenseRule);
   if (!renameButton && !incomeButton && !outgoingButton && !expenseButton) return;
+  if (incomeButton) reapplyIncomeRules();
   if (expenseButton) reapplyExpenseRules();
   saveState();
   rebuildInventoryFromInvoices();
@@ -786,6 +788,7 @@ function addIncomeRule() {
   state.incomeRules.push({ id: crypto.randomUUID(), match, source });
   els.incomeRuleMatchInput.value = "";
   els.incomeRuleSourceInput.value = "";
+  reapplyIncomeRules();
   saveState();
   render();
   setRuleSaved("进账来源规则已保存。");
@@ -1592,13 +1595,17 @@ function normalizeOcrPayload(payload) {
 }
 
 function normalizeTransactionItems(items) {
-  return Array.isArray(items) ? items.map((item) => applyIncomeRuleToTransaction({
+  return Array.isArray(items) ? items.map((item) => {
+    const description = item.description || item.payer || item.merchant || item.recipient || "Unknown Transaction";
+    return applyIncomeRuleToTransaction({
     date: item.date || new Date().toISOString().slice(0, 10),
-    description: item.description || item.payer || item.merchant || item.recipient || "Unknown Transaction",
+    description,
+    originalDescription: description,
     reference: item.reference || item.ref || "-",
     amount: toMoney(item.amount),
     direction: ["income", "expense", "repayment"].includes(item.direction) ? item.direction : "income"
-  })).filter((item) => item.amount > 0) : [];
+  });
+  }).filter((item) => item.amount > 0) : [];
 }
 
 function normalizeExpenseItems(items) {
@@ -1699,7 +1706,22 @@ function applyIncomeRuleToTransaction(transaction) {
   const rule = state.incomeRules.find((item) => haystack.includes(normalizeSearch(item.match)));
   if (!rule) return transaction;
   if (transaction.type === "income") return { ...transaction, payer: rule.source };
-  return { ...transaction, description: rule.source };
+  return { ...transaction, originalDescription: transaction.originalDescription || transaction.description, description: rule.source };
+}
+
+function applyIncomeRuleToIncome(income) {
+  const originalPayer = income.originalPayer || income.payer || "Unknown Payer";
+  const haystack = normalizeSearch(`${originalPayer} ${income.reference || ""}`);
+  const rule = state.incomeRules.find((item) => haystack.includes(normalizeSearch(item.match)));
+  return {
+    ...income,
+    originalPayer,
+    payer: rule ? rule.source : originalPayer
+  };
+}
+
+function reapplyIncomeRules() {
+  state.incomes = state.incomes.map(applyIncomeRuleToIncome);
 }
 
 function applyExpenseRule(expense) {
@@ -1906,9 +1928,11 @@ function parseSupplierInvoice(text) {
 }
 
 function parseIncome(text) {
+  const payer = findLabel(text, ["Payer", "Customer", "From", "Received From"]) || firstBusinessLine(text) || "Unknown Payer";
   return {
     type: "income",
-    payer: findLabel(text, ["Payer", "Customer", "From", "Received From"]) || firstBusinessLine(text) || "Unknown Payer",
+    payer,
+    originalPayer: payer,
     date: findDate(text),
     reference: findLabel(text, ["Reference No", "Reference", "Ref No", "Ref"]) || findPattern(text, /\b[A-Z]{2,}[-\d]{5,}\b/i) || "-",
     amount: findAmount(text, ["Amount", "Total", "Received", "Paid"]) || findLargestAmount(text)
@@ -1948,8 +1972,9 @@ function recordParsedDocument(parsed) {
     return;
   }
   if (parsed.type === "income") {
-    state.incomes.push({ ...parsed, id: crypto.randomUUID() });
-    state.cashOnHand = toMoney(state.cashOnHand + parsed.amount);
+    const income = applyIncomeRuleToIncome({ ...parsed, id: crypto.randomUUID() });
+    state.incomes.push(income);
+    state.cashOnHand = toMoney(state.cashOnHand + income.amount);
   }
   if (parsed.type === "supplier_invoice") {
     const invoice = applyRenameRulesToInvoice({ ...parsed, id: crypto.randomUUID() });
@@ -2053,6 +2078,7 @@ function transactionToIncome(transaction) {
     id: crypto.randomUUID(),
     type: "income",
     payer: normalized.description || "Unknown Payer",
+    originalPayer: transaction.originalDescription || transaction.description || normalized.description || "Unknown Payer",
     date: normalized.date || new Date().toISOString().slice(0, 10),
     reference: normalized.reference || "-",
     amount: toMoney(normalized.amount)
@@ -2733,6 +2759,7 @@ initializeApp();
 async function initializeApp() {
   fixKnownUnknownSuppliers();
   rebuildInventoryFromInvoices();
+  reapplyIncomeRules();
   reapplyExpenseRules();
   render();
   updateAuthUi();
