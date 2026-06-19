@@ -1322,13 +1322,7 @@ function updateRepaymentMatchPanel() {
   const unpaidInvoices = getUnpaidInvoices();
   const matchedInvoiceId = pendingRecord?.matchedInvoiceId || "";
   const autoLabel = matchedInvoiceId ? "自动匹配已找到，可改选其他 Invoice" : "自动匹配";
-  const options = [
-    `<option value="__auto__">${autoLabel}</option>`,
-    ...unpaidInvoices.map((invoice) => {
-      const remaining = toMoney(invoice.total - (invoice.paid || 0));
-      return `<option value="${escapeHtml(invoice.id)}">${escapeHtml(invoice.supplier)} - ${escapeHtml(invoice.invoiceNo)} - 剩余 ${formatMoney(remaining)}</option>`;
-    })
-  ];
+  const options = repaymentInvoiceOptions(autoLabel);
 
   els.repaymentInvoiceSelect.innerHTML = options.join("");
   els.repaymentInvoiceSelect.disabled = unpaidInvoices.length === 0;
@@ -1339,6 +1333,16 @@ function updateRepaymentMatchPanel() {
     ? "选择正确的公司或 Invoice 后，再按保存记录。"
     : "目前没有未付款 Invoice；保存后会先记录为未匹配付款。";
   updateManualRepaymentSaveState();
+}
+
+function repaymentInvoiceOptions(autoLabel = "自动匹配") {
+  return [
+    `<option value="__auto__">${escapeHtml(autoLabel)}</option>`,
+    ...getUnpaidInvoices().map((invoice) => {
+      const remaining = invoiceRemaining(invoice);
+      return `<option value="${escapeHtml(invoice.id)}">${escapeHtml(invoice.supplier)} - ${escapeHtml(invoice.invoiceNo)} - 剩余 ${formatMoney(remaining)}</option>`;
+    })
+  ];
 }
 
 function updateManualRepaymentSaveState() {
@@ -2034,9 +2038,11 @@ function applyTransactionBatchDestinations(record) {
   if (record.type !== "transaction_batch") return;
   record.transactions = record.transactions.map((transaction, index) => {
     const select = els.resultBox.querySelector(`[data-transaction-destination="${index}"]`);
+    const invoiceSelect = els.resultBox.querySelector(`[data-transaction-invoice="${index}"]`);
     return {
       ...transaction,
-      destination: select?.value || transaction.direction || "income"
+      destination: select?.value || transaction.direction || "income",
+      matchedInvoiceId: invoiceSelect?.value && invoiceSelect.value !== "__auto__" ? invoiceSelect.value : null
     };
   });
 }
@@ -2066,13 +2072,16 @@ function transactionToExpense(transaction) {
 }
 
 function transactionToPayment(transaction) {
+  const invoice = transaction.matchedInvoiceId
+    ? state.invoices.find((item) => item.id === transaction.matchedInvoiceId)
+    : null;
   return {
     type: "payment_proof",
-    recipient: transaction.description || "Unknown Recipient",
+    recipient: invoice?.supplier || transaction.description || "Unknown Recipient",
     date: transaction.date || new Date().toISOString().slice(0, 10),
     reference: transaction.reference || "-",
     amount: toMoney(transaction.amount),
-    matchedInvoiceId: null
+    matchedInvoiceId: invoice?.id || null
   };
 }
 
@@ -2456,8 +2465,13 @@ function renderTransactionBatchResult(parsed) {
             <option value="repayment" ${transaction.direction === "repayment" ? "selected" : ""}>还账</option>
           </select>
         </td>
+        <td>
+          <select class="destination-select" data-transaction-invoice="${index}">
+            ${repaymentInvoiceOptions("自动匹配")}
+          </select>
+        </td>
       </tr>`).join("")
-    : `<tr><td colspan="5">暂无明细</td></tr>`;
+    : `<tr><td colspan="6">暂无明细</td></tr>`;
 
   els.resultBox.innerHTML = `
     <div class="summary-grid">
@@ -2470,7 +2484,7 @@ function renderTransactionBatchResult(parsed) {
       <h3>交易明细</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>日期</th><th>说明</th><th>Reference</th><th>金额</th><th>保存去向</th></tr></thead>
+          <thead><tr><th>日期</th><th>说明</th><th>Reference</th><th>金额</th><th>保存去向</th><th>还给哪家 Supplier / Invoice</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
