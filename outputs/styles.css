@@ -84,6 +84,21 @@ h2 { font-size: 20px; }
   gap: 8px;
 }
 
+.remember-login {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.remember-login input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green);
+}
+
 .auth-fields input {
   min-width: 0;
   flex: 1;

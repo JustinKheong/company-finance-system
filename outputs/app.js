@@ -1,4 +1,6 @@
 const APP_STATE_ID = "main";
+const AUTH_STORAGE_KEY = "finance-system-auth-session-v1";
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const samples = {
   invoice: `Invoice INV-1005
@@ -126,6 +128,7 @@ const els = {
   loginBtn: document.querySelector("#loginBtn"),
   signupBtn: document.querySelector("#signupBtn"),
   logoutBtn: document.querySelector("#logoutBtn"),
+  rememberLoginInput: document.querySelector("#rememberLoginInput"),
   authStatus: document.querySelector("#authStatus")
 };
 
@@ -348,7 +351,7 @@ async function signInWithEmail() {
   setAuthBusy(true);
   try {
     const payload = await authRequest("/token?grant_type=password", credentials);
-    setAuthSession(payload);
+    setAuthSession(payload, { persist: els.rememberLoginInput.checked });
     await loadStateFromSupabase();
   } catch (error) {
     setAuthWarning(error.message || "登录失败，请检查 Email 和 Password。");
@@ -364,7 +367,7 @@ async function signUpWithEmail() {
   try {
     const payload = await authRequest("/signup", credentials);
     if (payload.access_token) {
-      setAuthSession(payload);
+      setAuthSession(payload, { persist: els.rememberLoginInput.checked });
       await loadStateFromSupabase();
     } else {
       setAuthReady("注册成功。请去 Email 信箱确认后再登录。");
@@ -378,6 +381,7 @@ async function signUpWithEmail() {
 
 function signOut() {
   authSession = null;
+  clearPersistedAuthSession();
   state = normalizeState(structuredClone(defaultState));
   clearPendingRecord();
   render();
@@ -400,9 +404,11 @@ function authCredentials() {
   return { email, password };
 }
 
-function setAuthSession(payload) {
-  authSession = payload;
+function setAuthSession(payload, options = {}) {
+  authSession = normalizeAuthSession(payload);
   els.authPasswordInput.value = "";
+  if (authSession?.user?.email) els.authEmailInput.value = authSession.user.email;
+  if (options.persist) savePersistedAuthSession(authSession);
   updateAuthUi();
 }
 
@@ -414,6 +420,7 @@ function updateAuthUi() {
   els.logoutBtn.hidden = !loggedIn;
   els.authEmailInput.disabled = loggedIn;
   els.authPasswordInput.hidden = loggedIn;
+  els.rememberLoginInput.closest(".remember-login").hidden = loggedIn;
   if (loggedIn) {
     setAuthReady(`已登录：${authSession.user?.email || els.authEmailInput.value.trim()}`);
   } else {
@@ -435,6 +442,77 @@ function setAuthReady(message) {
 function setAuthWarning(message) {
   els.authStatus.textContent = message;
   els.authStatus.className = "warning";
+}
+
+function normalizeAuthSession(payload) {
+  if (!payload) return null;
+  const expiresAt = payload.expires_at
+    ? Number(payload.expires_at) * 1000
+    : Date.now() + Number(payload.expires_in || 3600) * 1000;
+  return {
+    ...payload,
+    expires_at_ms: expiresAt
+  };
+}
+
+function savePersistedAuthSession(session) {
+  try {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      session,
+      rememberUntil: Date.now() + THIRTY_DAYS_MS
+    }));
+  } catch {
+    setAuthWarning("浏览器无法保存登录状态。");
+  }
+}
+
+function clearPersistedAuthSession() {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // Ignore storage cleanup failures.
+  }
+}
+
+async function restorePersistedAuthSession() {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || "null");
+  } catch {
+    clearPersistedAuthSession();
+    return false;
+  }
+  if (!saved?.session || !saved?.rememberUntil) return false;
+  if (Date.now() > Number(saved.rememberUntil)) {
+    clearPersistedAuthSession();
+    return false;
+  }
+
+  const savedSession = normalizeAuthSession(saved.session);
+  if (savedSession?.access_token && Date.now() < savedSession.expires_at_ms - 60_000) {
+    setAuthSession(savedSession);
+    els.rememberLoginInput.checked = true;
+    return true;
+  }
+
+  if (!savedSession?.refresh_token) {
+    clearPersistedAuthSession();
+    return false;
+  }
+
+  try {
+    setAuthWarning("正在恢复登录...");
+    const refreshed = await authRequest("/token?grant_type=refresh_token", {
+      refresh_token: savedSession.refresh_token
+    });
+    setAuthSession(refreshed, { persist: true });
+    els.rememberLoginInput.checked = true;
+    return true;
+  } catch {
+    clearPersistedAuthSession();
+    setAuthWarning("登录已过期，请重新登录。");
+    return false;
+  }
 }
 
 async function supabaseRequest(path, options = {}) {
@@ -2227,10 +2305,15 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-fixKnownUnknownSuppliers();
-rebuildInventoryFromInvoices();
-reapplyExpenseRules();
-render();
-updateAuthUi();
-loadStateFromSupabase();
-refreshConfigStatus();
+initializeApp();
+
+async function initializeApp() {
+  fixKnownUnknownSuppliers();
+  rebuildInventoryFromInvoices();
+  reapplyExpenseRules();
+  render();
+  updateAuthUi();
+  await restorePersistedAuthSession();
+  await loadStateFromSupabase();
+  refreshConfigStatus();
+}
