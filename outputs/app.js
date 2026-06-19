@@ -546,14 +546,18 @@ async function restorePersistedAuthSession() {
 async function supabaseRequest(path, options = {}) {
   await ensureSupabaseConfig();
   const method = options.method || "GET";
-  const response = await fetchWithRetry(`${supabaseConfig.url}/rest/v1${path}`, {
-    ...options,
+  const response = await fetchWithRetry("/api/supabase-rest", {
+    method: "POST",
     headers: {
-      apikey: supabaseConfig.anonKey,
       Authorization: `Bearer ${authSession?.access_token || supabaseConfig.anonKey}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      path,
+      method,
+      headers: options.headers || {},
+      body: options.body || null
+    })
   }, `Supabase REST ${method} ${path}`);
   if (!response.ok) throw new Error(await response.text());
   if (response.status === 204) return null;

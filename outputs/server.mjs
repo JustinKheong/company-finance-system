@@ -51,6 +51,11 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/api/supabase-rest") {
+      await handleSupabaseRestProxy(req, res);
+      return;
+    }
+
     if (req.method === "GET" || req.method === "HEAD") {
       await serveStatic(req, res);
       return;
@@ -63,6 +68,49 @@ createServer(async (req, res) => {
 }).listen(port, () => {
   console.log(`Finance OCR app running at http://localhost:${port}/`);
 });
+
+async function handleSupabaseRestProxy(req, res) {
+  const body = await readRequestBody(req, 8 * 1024 * 1024);
+  let payload;
+  try {
+    payload = JSON.parse(body.toString("utf8") || "{}");
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON." });
+    return;
+  }
+
+  const path = String(payload.path || "");
+  const method = String(payload.method || "GET").toUpperCase();
+  if (!path.startsWith("/") || path.includes("://")) {
+    sendJson(res, 400, { error: "Invalid Supabase path." });
+    return;
+  }
+  if (!["GET", "POST", "PATCH", "DELETE"].includes(method)) {
+    sendJson(res, 405, { error: "Invalid Supabase method." });
+    return;
+  }
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    sendJson(res, 500, { error: "SUPABASE_URL or SUPABASE_ANON_KEY is not set." });
+    return;
+  }
+
+  const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1${path}`, {
+    method,
+    headers: {
+      apikey: process.env.SUPABASE_ANON_KEY,
+      Authorization: req.headers.authorization || `Bearer ${process.env.SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      ...(payload.headers || {})
+    },
+    body: payload.body == null ? undefined : payload.body
+  });
+  const text = await response.text();
+  res.writeHead(response.status, {
+    "Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
+    "Cache-Control": "no-store"
+  });
+  res.end(text);
+}
 
 async function handleOcr(req, res) {
   const apiKey = process.env.OPENAI_API_KEY;
