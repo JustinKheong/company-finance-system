@@ -558,11 +558,12 @@ async function supabaseRequest(path, options = {}) {
   });
   if (!response.ok) throw new Error(await response.text());
   if (response.status === 204) return null;
-  return readJsonResponse(response, `Supabase REST ${path}`);
+  return readJsonResponse(response, `Supabase REST ${path}`, { allowEmpty: true });
 }
 
-async function readJsonResponse(response, label) {
+async function readJsonResponse(response, label, options = {}) {
   const text = await response.text();
+  if (!text.trim() && options.allowEmpty) return null;
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
     throw new Error(`${label} 回传的不是 JSON：${summarizeClientText(text)}`);
