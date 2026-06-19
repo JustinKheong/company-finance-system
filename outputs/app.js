@@ -1,6 +1,8 @@
 const APP_STATE_ID = "main";
 const AUTH_STORAGE_KEY = "finance-system-auth-session-v1";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const RECEIPT_PREVIEW_MAX_WIDTH = 900;
+const RECEIPT_PREVIEW_QUALITY = 0.68;
 
 const samples = {
   invoice: `Invoice INV-1005
@@ -65,6 +67,7 @@ let settlementDraft = null;
 let supabaseConfig = null;
 let authSession = null;
 let canSaveApiKey = true;
+let lastSupabaseSaveError = "";
 
 const els = {
   cashInput: document.querySelector("#cashInput"),
@@ -300,6 +303,7 @@ async function loadStateFromSupabase() {
 
 async function saveStateToSupabase() {
   try {
+    lastSupabaseSaveError = "";
     await ensureSupabaseConfig();
     if (!supabaseConfig?.url || !supabaseConfig?.anonKey) return false;
     if (!authSession?.access_token) {
@@ -315,6 +319,7 @@ async function saveStateToSupabase() {
     ]);
     return true;
   } catch (error) {
+    lastSupabaseSaveError = error.message || "未知 Supabase 保存错误。";
     els.uploadStatus.textContent = `Supabase 保存失败：${error.message || "请检查网络、URL、ANON KEY 和 RLS policy。"}`;
     els.uploadStatus.className = "upload-status warning";
     return false;
@@ -609,6 +614,7 @@ function supplierRowsFromState() {
 }
 
 function invoiceToRow(invoice) {
+  const receiptImages = invoice.receiptImages || (invoice.receiptImage ? [invoice.receiptImage] : []);
   return withUserId({
     id: invoice.id || crypto.randomUUID(),
     supplier_id: supplierId(invoice.supplier),
@@ -619,10 +625,10 @@ function invoiceToRow(invoice) {
     paid: Number(invoice.paid || 0),
     status: invoice.status || "Unpaid",
     items: invoice.items || [],
-    receipt_images: invoice.receiptImages || (invoice.receiptImage ? [invoice.receiptImage] : []),
+    receipt_images: receiptImages.map(limitReceiptPreview),
     receipt_file_names: invoice.receiptFileNames || (invoice.receiptFileName ? [invoice.receiptFileName] : []),
     settlement_statement: invoice.settlementStatement || null,
-    metadata: invoice,
+    metadata: invoiceMetadataForSupabase(invoice),
     updated_at: new Date().toISOString()
   });
 }
@@ -1002,7 +1008,7 @@ async function recognizeUploadedFile() {
       return;
     }
     if (parsed.type === "supplier_invoice") {
-      const receiptImages = await Promise.all(files.map(fileToDataUrl));
+      const receiptImages = await Promise.all(files.map(fileToReceiptPreviewDataUrl));
       parsed.receiptImages = receiptImages;
       parsed.receiptFileNames = files.map((file) => file.name);
       parsed.receiptImage = receiptImages[0];
@@ -1083,6 +1089,7 @@ async function savePendingRecord() {
       <div class="notice-box">
         <strong>保存失败</strong>
         <p>这笔记录没有写入 Supabase，所以其他手机或电脑不会看到。请检查网络、登录状态和 Supabase RLS policy。</p>
+        <p><strong>Supabase 错误：</strong>${escapeHtml(lastSupabaseSaveError || "没有收到详细错误。")}</p>
       </div>`;
     return;
   }
@@ -1408,6 +1415,45 @@ function fileToDataUrl(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+async function fileToReceiptPreviewDataUrl(file) {
+  if (!file.type.startsWith("image/")) return fileToDataUrl(file);
+  const originalDataUrl = await fileToDataUrl(file);
+  return compressImageDataUrl(originalDataUrl).catch(() => originalDataUrl);
+}
+
+function compressImageDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, RECEIPT_PREVIEW_MAX_WIDTH / image.naturalWidth);
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        reject(new Error("Canvas is not available."));
+        return;
+      }
+      context.drawImage(image, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", RECEIPT_PREVIEW_QUALITY));
+    };
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+}
+
+function limitReceiptPreview(dataUrl) {
+  const value = String(dataUrl || "");
+  return value.length > 1_500_000 ? "" : value;
+}
+
+function invoiceMetadataForSupabase(invoice) {
+  const { receiptImage, receiptImages, ...metadata } = invoice;
+  return metadata;
 }
 
 function normalizeOcrPayload(payload) {
