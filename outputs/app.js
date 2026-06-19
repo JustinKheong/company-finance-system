@@ -61,6 +61,7 @@ let pendingRecord = null;
 let lastSaveSnapshot = null;
 let settlementDraft = null;
 let supabaseConfig = null;
+let authSession = null;
 
 const els = {
   cashInput: document.querySelector("#cashInput"),
@@ -118,9 +119,18 @@ const els = {
   expenseRuleMatchInput: document.querySelector("#expenseRuleMatchInput"),
   expenseRuleNameInput: document.querySelector("#expenseRuleNameInput"),
   addExpenseRuleBtn: document.querySelector("#addExpenseRuleBtn"),
-  expenseRuleRows: document.querySelector("#expenseRuleRows")
+  expenseRuleRows: document.querySelector("#expenseRuleRows"),
+  authEmailInput: document.querySelector("#authEmailInput"),
+  authPasswordInput: document.querySelector("#authPasswordInput"),
+  loginBtn: document.querySelector("#loginBtn"),
+  signupBtn: document.querySelector("#signupBtn"),
+  logoutBtn: document.querySelector("#logoutBtn"),
+  authStatus: document.querySelector("#authStatus")
 };
 
+els.loginBtn.addEventListener("click", signInWithEmail);
+els.signupBtn.addEventListener("click", signUpWithEmail);
+els.logoutBtn.addEventListener("click", signOut);
 document.querySelector("#analyzeBtn").addEventListener("click", analyzeCurrentDocument);
 els.saveRecordBtn.addEventListener("click", savePendingRecord);
 els.undoSaveBtn.addEventListener("click", undoLastSave);
@@ -240,7 +250,7 @@ function mergeDefaultRules(savedRules, defaultRules) {
 
 function saveState() {
   saveStateToSupabase();
-  return Boolean(supabaseConfig?.url && supabaseConfig?.anonKey);
+  return Boolean(supabaseConfig?.url && supabaseConfig?.anonKey && authSession?.access_token);
 }
 
 async function loadStateFromSupabase() {
@@ -251,9 +261,17 @@ async function loadStateFromSupabase() {
       els.uploadStatus.className = "upload-status warning";
       return;
     }
+    if (!authSession?.access_token) {
+      updateAuthUi();
+      state = normalizeState(structuredClone(defaultState));
+      render();
+      els.uploadStatus.textContent = "请先用 Email 登录，系统才会载入 Supabase 资料。";
+      els.uploadStatus.className = "upload-status warning";
+      return;
+    }
 
     const [appRows, invoiceRows, inventoryRows] = await Promise.all([
-      supabaseRequest(`/app_state?id=eq.${encodeURIComponent(APP_STATE_ID)}&select=data`),
+      supabaseRequest(`/app_state?id=eq.${encodeURIComponent(appStateId())}&select=data`),
       supabaseRequest("/invoices?select=*"),
       supabaseRequest("/inventory?select=*")
     ]);
@@ -280,11 +298,16 @@ async function saveStateToSupabase() {
   try {
     await ensureSupabaseConfig();
     if (!supabaseConfig?.url || !supabaseConfig?.anonKey) return;
+    if (!authSession?.access_token) {
+      els.uploadStatus.textContent = "请先登录，资料才会保存到 Supabase。";
+      els.uploadStatus.className = "upload-status warning";
+      return;
+    }
+    await replaceSupabaseTable("suppliers", supplierRowsFromState());
     await Promise.all([
-      replaceSupabaseTable("suppliers", supplierRowsFromState()),
       replaceSupabaseTable("invoices", state.invoices.map(invoiceToRow)),
       replaceSupabaseTable("inventory", inventoryRowsFromState()),
-      upsertSupabaseRows("app_state", [{ id: APP_STATE_ID, data: appStatePayload() }])
+      upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })])
     ]);
   } catch {
     els.uploadStatus.textContent = "Supabase 保存失败。请检查网络、URL、ANON KEY 和 RLS policy。";
@@ -299,13 +322,122 @@ async function ensureSupabaseConfig() {
   return supabaseConfig;
 }
 
+async function authRequest(path, body) {
+  await ensureSupabaseConfig();
+  const response = await fetch(`${supabaseConfig.url}/auth/v1${path}`, {
+    method: "POST",
+    headers: {
+      apikey: supabaseConfig.anonKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error_description || payload.msg || payload.message || "Supabase Auth 请求失败。");
+  return payload;
+}
+
+async function signInWithEmail() {
+  const credentials = authCredentials();
+  if (!credentials) return;
+  setAuthBusy(true);
+  try {
+    const payload = await authRequest("/token?grant_type=password", credentials);
+    setAuthSession(payload);
+    await loadStateFromSupabase();
+  } catch (error) {
+    setAuthWarning(error.message || "登录失败，请检查 Email 和 Password。");
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function signUpWithEmail() {
+  const credentials = authCredentials();
+  if (!credentials) return;
+  setAuthBusy(true);
+  try {
+    const payload = await authRequest("/signup", credentials);
+    if (payload.access_token) {
+      setAuthSession(payload);
+      await loadStateFromSupabase();
+    } else {
+      setAuthReady("注册成功。请去 Email 信箱确认后再登录。");
+    }
+  } catch (error) {
+    setAuthWarning(error.message || "注册失败，请检查 Supabase Auth 设置。");
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+function signOut() {
+  authSession = null;
+  state = normalizeState(structuredClone(defaultState));
+  clearPendingRecord();
+  render();
+  updateAuthUi();
+  els.uploadStatus.textContent = "已退出登录。";
+  els.uploadStatus.className = "upload-status warning";
+}
+
+function authCredentials() {
+  const email = els.authEmailInput.value.trim();
+  const password = els.authPasswordInput.value;
+  if (!email || !password) {
+    setAuthWarning("请填写 Email 和 Password。");
+    return null;
+  }
+  if (password.length < 6) {
+    setAuthWarning("Password 至少需要 6 个字符。");
+    return null;
+  }
+  return { email, password };
+}
+
+function setAuthSession(payload) {
+  authSession = payload;
+  els.authPasswordInput.value = "";
+  updateAuthUi();
+}
+
+function updateAuthUi() {
+  const loggedIn = Boolean(authSession?.access_token);
+  els.loginBtn.hidden = loggedIn;
+  els.signupBtn.hidden = loggedIn;
+  els.logoutBtn.hidden = !loggedIn;
+  els.authEmailInput.disabled = loggedIn;
+  els.authPasswordInput.hidden = loggedIn;
+  if (loggedIn) {
+    setAuthReady(`已登录：${authSession.user?.email || els.authEmailInput.value.trim()}`);
+  } else {
+    setAuthWarning("请先登录以载入数据库资料。");
+  }
+}
+
+function setAuthBusy(isBusy) {
+  els.loginBtn.disabled = isBusy;
+  els.signupBtn.disabled = isBusy;
+  els.logoutBtn.disabled = isBusy;
+}
+
+function setAuthReady(message) {
+  els.authStatus.textContent = message;
+  els.authStatus.className = "ready";
+}
+
+function setAuthWarning(message) {
+  els.authStatus.textContent = message;
+  els.authStatus.className = "warning";
+}
+
 async function supabaseRequest(path, options = {}) {
   await ensureSupabaseConfig();
   const response = await fetch(`${supabaseConfig.url}/rest/v1${path}`, {
     ...options,
     headers: {
       apikey: supabaseConfig.anonKey,
-      Authorization: `Bearer ${supabaseConfig.anonKey}`,
+      Authorization: `Bearer ${authSession?.access_token || supabaseConfig.anonKey}`,
       "Content-Type": "application/json",
       ...(options.headers || {})
     }
@@ -343,11 +475,11 @@ function supplierRowsFromState() {
     name,
     normalized_name: normalizeSearch(name),
     updated_at: new Date().toISOString()
-  }));
+  })).map(withUserId);
 }
 
 function invoiceToRow(invoice) {
-  return {
+  return withUserId({
     id: invoice.id || crypto.randomUUID(),
     supplier_id: supplierId(invoice.supplier),
     supplier_name: invoice.supplier || "Unknown Supplier",
@@ -362,7 +494,7 @@ function invoiceToRow(invoice) {
     settlement_statement: invoice.settlementStatement || null,
     metadata: invoice,
     updated_at: new Date().toISOString()
-  };
+  });
 }
 
 function invoiceFromRow(row) {
@@ -384,21 +516,22 @@ function invoiceFromRow(row) {
 }
 
 function inventoryRowsFromState() {
-  return Object.entries(state.inventory || {}).map(([key, item]) => ({
-    id: key,
+  return Object.entries(state.inventory || {}).map(([key, item]) => withUserId({
+    id: scopedRecordId(key || item.product || "unknown-product"),
     product: item.product,
     latest_cost: Number(item.latestCost || 0),
     invoice_date: item.invoiceDate || null,
     supplier_id: supplierId(item.supplier),
     supplier_name: item.supplier || "",
-    metadata: item,
+    metadata: { ...item, inventoryKey: key },
     updated_at: new Date().toISOString()
   }));
 }
 
 function inventoryFromRows(rows) {
   return Array.isArray(rows) ? rows.reduce((inventory, row) => {
-    inventory[row.id] = {
+    const key = row.metadata?.inventoryKey || unscopedRecordId(row.id);
+    inventory[key] = {
       ...(row.metadata || {}),
       product: row.product,
       latestCost: Number(row.latest_cost || 0),
@@ -410,7 +543,32 @@ function inventoryFromRows(rows) {
 }
 
 function supplierId(name) {
-  return normalizeSearch(name || "unknown-supplier").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "unknown-supplier";
+  return scopedRecordId(name || "unknown-supplier");
+}
+
+function scopedRecordId(value) {
+  const slug = normalizeSearch(value || "record").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "record";
+  return `${currentUserPrefix()}-${slug}`;
+}
+
+function unscopedRecordId(value) {
+  const prefix = `${currentUserPrefix()}-`;
+  return String(value || "").startsWith(prefix) ? String(value).slice(prefix.length) : value;
+}
+
+function currentUserPrefix() {
+  return authSession?.user?.id || "anonymous";
+}
+
+function appStateId() {
+  return `${currentUserPrefix()}-${APP_STATE_ID}`;
+}
+
+function withUserId(row) {
+  return {
+    ...row,
+    user_id: authSession?.user?.id
+  };
 }
 
 function addRenameRule() {
@@ -2047,5 +2205,6 @@ fixKnownUnknownSuppliers();
 rebuildInventoryFromInvoices();
 reapplyExpenseRules();
 render();
+updateAuthUi();
 loadStateFromSupabase();
 refreshConfigStatus();

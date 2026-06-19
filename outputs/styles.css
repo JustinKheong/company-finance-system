@@ -65,6 +65,46 @@ h2 { font-size: 20px; }
 
 .top-actions { gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 
+.auth-panel {
+  width: min(470px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.86);
+  display: grid;
+  gap: 8px;
+}
+
+.auth-fields, .auth-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-fields input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--panel);
+}
+
+.auth-buttons .secondary-btn {
+  min-height: 38px;
+  padding-inline: 12px;
+}
+
+.auth-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-panel p.ready { color: var(--green); }
+.auth-panel p.warning { color: var(--coral); }
+
 .balance-control {
   display: grid;
   gap: 4px;
@@ -698,6 +738,8 @@ tbody tr:last-child td { border-bottom: 0; }
   .app-shell { width: min(100% - 20px, 1440px); padding-top: 16px; }
   .topbar { align-items: flex-start; flex-direction: column; }
   .top-actions { width: 100%; justify-content: flex-start; }
+  .auth-panel { width: 100%; }
+  .auth-fields { flex-direction: column; }
   .balance-control { flex: 1; min-width: 190px; }
   .balance-control input { width: 100%; }
   .dashboard-grid { grid-template-columns: 1fr; }

@@ -1,72 +1,53 @@
-create table if not exists public.suppliers (
-  id text primary key,
-  user_id uuid not null default auth.uid(),
-  name text not null,
-  normalized_name text not null,
-  phone text,
-  email text,
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table public.suppliers add column if not exists user_id uuid default auth.uid();
+alter table public.invoices add column if not exists user_id uuid default auth.uid();
+alter table public.inventory add column if not exists user_id uuid default auth.uid();
+alter table public.app_state add column if not exists user_id uuid default auth.uid();
 
 create index if not exists suppliers_user_id_idx on public.suppliers(user_id);
-
-create table if not exists public.invoices (
-  id text primary key,
-  user_id uuid not null default auth.uid(),
-  supplier_id text references public.suppliers(id) on delete set null,
-  supplier_name text not null,
-  invoice_no text not null,
-  invoice_date date,
-  total numeric(14, 2) not null default 0,
-  paid numeric(14, 2) not null default 0,
-  status text not null default 'Unpaid',
-  items jsonb not null default '[]'::jsonb,
-  receipt_images jsonb not null default '[]'::jsonb,
-  receipt_file_names jsonb not null default '[]'::jsonb,
-  settlement_statement jsonb,
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists invoices_supplier_id_idx on public.invoices(supplier_id);
 create index if not exists invoices_user_id_idx on public.invoices(user_id);
-create index if not exists invoices_status_idx on public.invoices(status);
-create index if not exists invoices_invoice_date_idx on public.invoices(invoice_date);
-
-create table if not exists public.inventory (
-  id text primary key,
-  user_id uuid not null default auth.uid(),
-  product text not null,
-  latest_cost numeric(14, 4) not null default 0,
-  invoice_date date,
-  supplier_id text references public.suppliers(id) on delete set null,
-  supplier_name text,
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists inventory_product_idx on public.inventory(product);
 create index if not exists inventory_user_id_idx on public.inventory(user_id);
-create index if not exists inventory_supplier_id_idx on public.inventory(supplier_id);
-
-create table if not exists public.app_state (
-  id text primary key,
-  user_id uuid not null default auth.uid(),
-  data jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
 create index if not exists app_state_user_id_idx on public.app_state(user_id);
 
 alter table public.suppliers enable row level security;
 alter table public.invoices enable row level security;
 alter table public.inventory enable row level security;
 alter table public.app_state enable row level security;
+
+drop policy if exists "anon read suppliers" on public.suppliers;
+drop policy if exists "anon insert suppliers" on public.suppliers;
+drop policy if exists "anon update suppliers" on public.suppliers;
+drop policy if exists "anon delete suppliers" on public.suppliers;
+drop policy if exists "users read own suppliers" on public.suppliers;
+drop policy if exists "users insert own suppliers" on public.suppliers;
+drop policy if exists "users update own suppliers" on public.suppliers;
+drop policy if exists "users delete own suppliers" on public.suppliers;
+
+drop policy if exists "anon read invoices" on public.invoices;
+drop policy if exists "anon insert invoices" on public.invoices;
+drop policy if exists "anon update invoices" on public.invoices;
+drop policy if exists "anon delete invoices" on public.invoices;
+drop policy if exists "users read own invoices" on public.invoices;
+drop policy if exists "users insert own invoices" on public.invoices;
+drop policy if exists "users update own invoices" on public.invoices;
+drop policy if exists "users delete own invoices" on public.invoices;
+
+drop policy if exists "anon read inventory" on public.inventory;
+drop policy if exists "anon insert inventory" on public.inventory;
+drop policy if exists "anon update inventory" on public.inventory;
+drop policy if exists "anon delete inventory" on public.inventory;
+drop policy if exists "users read own inventory" on public.inventory;
+drop policy if exists "users insert own inventory" on public.inventory;
+drop policy if exists "users update own inventory" on public.inventory;
+drop policy if exists "users delete own inventory" on public.inventory;
+
+drop policy if exists "anon read app_state" on public.app_state;
+drop policy if exists "anon insert app_state" on public.app_state;
+drop policy if exists "anon update app_state" on public.app_state;
+drop policy if exists "anon delete app_state" on public.app_state;
+drop policy if exists "users read own app_state" on public.app_state;
+drop policy if exists "users insert own app_state" on public.app_state;
+drop policy if exists "users update own app_state" on public.app_state;
+drop policy if exists "users delete own app_state" on public.app_state;
 
 create policy "users read own suppliers" on public.suppliers for select to authenticated using (user_id = auth.uid());
 create policy "users insert own suppliers" on public.suppliers for insert to authenticated with check (user_id = auth.uid());
