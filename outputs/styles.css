@@ -124,7 +124,7 @@ h2 { font-size: 20px; }
 .auth-panel p.ready { color: var(--green); }
 .auth-panel p.warning { color: var(--coral); }
 
-.balance-control {
+.balance-control, .month-control {
   display: grid;
   gap: 4px;
   color: var(--muted);
@@ -132,7 +132,7 @@ h2 { font-size: 20px; }
   font-weight: 700;
 }
 
-.balance-control input {
+.balance-control input, .month-control input {
   width: 160px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -670,6 +670,44 @@ tbody tr:last-child td { border-bottom: 0; }
 .pending { color: var(--amber); }
 .unmatched { color: var(--coral); }
 
+.group-row td {
+  padding: 0;
+}
+
+.group-row details {
+  padding: 12px 14px;
+}
+
+.group-row summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.group-row summary strong {
+  color: var(--ink);
+}
+
+.group-row summary span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.nested-table-wrap {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: auto;
+  background: #fff;
+}
+
+.nested-table-wrap table {
+  box-shadow: none;
+}
+
 .invoice-dialog {
   width: min(960px, calc(100% - 28px));
   max-height: min(840px, calc(100vh - 28px));
@@ -759,8 +797,8 @@ tbody tr:last-child td { border-bottom: 0; }
   .top-actions { width: 100%; justify-content: flex-start; }
   .auth-panel { width: 100%; }
   .auth-fields { flex-direction: column; }
-  .balance-control { flex: 1; min-width: 190px; }
-  .balance-control input { width: 100%; }
+  .balance-control, .month-control { flex: 1; min-width: 190px; }
+  .balance-control input, .month-control input { width: 100%; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .metric { min-height: 96px; }
   .summary-grid { grid-template-columns: 1fr; }

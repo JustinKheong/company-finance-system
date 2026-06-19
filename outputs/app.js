@@ -68,9 +68,11 @@ let supabaseConfig = null;
 let authSession = null;
 let canSaveApiKey = true;
 let lastSupabaseSaveError = "";
+let selectedMonth = currentMonth();
 
 const els = {
   cashInput: document.querySelector("#cashInput"),
+  monthInput: document.querySelector("#monthInput"),
   cashMetric: document.querySelector("#cashMetric"),
   payableMetric: document.querySelector("#payableMetric"),
   spentMetric: document.querySelector("#spentMetric"),
@@ -177,6 +179,11 @@ document.querySelectorAll(".segment-button").forEach((button) => {
 els.cashInput.addEventListener("input", () => {
   state.cashOnHand = toMoney(els.cashInput.value);
   saveState();
+  render();
+});
+
+els.monthInput.addEventListener("change", () => {
+  selectedMonth = els.monthInput.value || currentMonth();
   render();
 });
 
@@ -1668,32 +1675,154 @@ function reapplyExpenseRules() {
   });
 }
 
-function groupExpenseRows(expenses) {
-  const groups = new Map();
-  expenses.forEach((expense) => {
-    const merchant = expense.merchant || expense.category || "其他";
-    const category = expense.category || "其他";
-    const key = `${merchant}__${category}`;
-    const current = groups.get(key) || {
-      dateSet: new Set(),
-      merchant,
-      category,
-      amount: 0
-    };
-    current.dateSet.add(expense.date || "-");
-    current.amount = toMoney(current.amount + expense.amount);
-    groups.set(key, current);
-  });
+function groupInvoiceRows(invoices) {
+  return groupRecords(invoices, (invoice) => invoice.supplier || "Unknown Supplier")
+    .map((group) => ({
+      ...group,
+      supplier: group.label,
+      total: sumRecords(group.records, "total"),
+      paid: sumRecords(group.records, "paid"),
+      remaining: group.records.reduce((sum, invoice) => sum + invoiceRemaining(invoice), 0),
+      status: group.records.every((invoice) => invoice.status === "Paid") ? "Paid" : "Pending"
+    }))
+    .sort((a, b) => b.remaining - a.remaining);
+}
 
+function groupIncomeRows(incomes) {
+  return groupRecords(incomes, (income) => income.payer || "Unknown Payer")
+    .map((group) => ({
+      ...group,
+      payer: group.label,
+      amount: sumRecords(group.records, "amount")
+    }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
+function groupExpenseRows(expenses) {
+  return groupRecords(expenses, (expense) => `${expense.category || "其他"}__${expense.merchant || "其他"}`)
+    .map((group) => {
+      const [category, merchant] = group.label.split("__");
+      return {
+        ...group,
+        merchant,
+        category,
+        amount: sumRecords(group.records, "amount")
+      };
+    })
+    .sort((a, b) => b.amount - a.amount);
+}
+
+function groupRecords(records, labelForRecord) {
+  const groups = new Map();
+  records.forEach((record) => {
+    const label = labelForRecord(record);
+    const current = groups.get(label) || { label, records: [], dateSet: new Set() };
+    current.records.push(record);
+    current.dateSet.add(record.date || "-");
+    groups.set(label, current);
+  });
   return [...groups.values()].map((group) => {
     const dates = [...group.dateSet].sort();
     return {
+      ...group,
       date: dates.length === 1 ? dates[0] : `${dates[0]} - ${dates[dates.length - 1]}`,
-      merchant: group.merchant,
-      category: group.category,
-      amount: group.amount
+      count: group.records.length
     };
-  }).sort((a, b) => b.amount - a.amount);
+  });
+}
+
+function sumRecords(records, key) {
+  return toMoney(records.reduce((sum, record) => sum + Number(record[key] || 0), 0));
+}
+
+function renderInvoiceGroupRow(group) {
+  const detailRows = group.records.map((invoice) => `
+    <tr>
+      <td>${escapeHtml(invoice.invoiceNo)}</td>
+      <td>${escapeHtml(invoice.date)}</td>
+      <td class="money">${formatMoney(invoice.total)}</td>
+      <td class="money">${formatMoney(invoice.paid || 0)}</td>
+      <td class="${invoice.status === "Paid" ? "paid" : "pending"}">${escapeHtml(invoice.status)}</td>
+      <td><button class="detail-actions-btn" data-view-invoice="${escapeHtml(invoice.id)}" type="button">查看单据</button></td>
+    </tr>`).join("");
+  return `
+    <tr class="group-row">
+      <td colspan="7">
+        <details>
+          <summary>
+            <strong>${escapeHtml(group.supplier)}</strong>
+            <span>${group.count} 张</span>
+            <span>日期：${escapeHtml(group.date)}</span>
+            <span>总额：${formatMoney(group.total)}</span>
+            <span>已付：${formatMoney(group.paid)}</span>
+            <span>未付：${formatMoney(group.remaining)}</span>
+          </summary>
+          <div class="nested-table-wrap">
+            <table>
+              <thead><tr><th>Invoice</th><th>日期</th><th>金额</th><th>已付</th><th>状态</th><th>单据</th></tr></thead>
+              <tbody>${detailRows}</tbody>
+            </table>
+          </div>
+        </details>
+      </td>
+    </tr>`;
+}
+
+function renderIncomeGroupRow(group) {
+  const detailRows = group.records.map((income) => `
+    <tr>
+      <td>${escapeHtml(income.date)}</td>
+      <td>${escapeHtml(income.reference)}</td>
+      <td class="money paid">${formatMoney(income.amount)}</td>
+    </tr>`).join("");
+  return `
+    <tr class="group-row">
+      <td colspan="4">
+        <details>
+          <summary>
+            <strong>${escapeHtml(group.payer)}</strong>
+            <span>${group.count} 笔</span>
+            <span>日期：${escapeHtml(group.date)}</span>
+            <span>金额：${formatMoney(group.amount)}</span>
+          </summary>
+          <div class="nested-table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>Reference</th><th>金额</th></tr></thead>
+              <tbody>${detailRows}</tbody>
+            </table>
+          </div>
+        </details>
+      </td>
+    </tr>`;
+}
+
+function renderExpenseGroupRow(group) {
+  const detailRows = group.records.map((expense) => `
+    <tr>
+      <td>${escapeHtml(expense.date)}</td>
+      <td>${escapeHtml(expense.merchant || "-")}</td>
+      <td class="money">${formatMoney(expense.amount)}</td>
+    </tr>`).join("");
+  return `
+    <tr class="group-row">
+      <td colspan="4">
+        <details>
+          <summary>
+            <strong>${escapeHtml(group.merchant)}</strong>
+            <span><span class="chip">${escapeHtml(group.category)}</span></span>
+            <span>${group.count} 笔</span>
+            <span>日期：${escapeHtml(group.date)}</span>
+            <span>金额：${formatMoney(group.amount)}</span>
+          </summary>
+          <div class="nested-table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>Payee / Merchant</th><th>金额</th></tr></thead>
+              <tbody>${detailRows}</tbody>
+            </table>
+          </div>
+        </details>
+      </td>
+    </tr>`;
 }
 
 function classifyText(text) {
@@ -2047,10 +2176,14 @@ function categorizeExpense(text) {
 
 function render() {
   els.cashInput.value = state.cashOnHand;
-  const payable = state.invoices.reduce((sum, invoice) => sum + Math.max(invoice.total - (invoice.paid || 0), 0), 0);
-  const companyExpenses = state.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  els.monthInput.value = selectedMonth;
+  const monthInvoices = filterByMonth(state.invoices, "date");
+  const monthExpenses = filterByMonth(state.expenses, "date");
+  const monthPayments = filterByMonth(state.payments, "date");
+  const payable = monthInvoices.reduce((sum, invoice) => sum + Math.max(invoice.total - (invoice.paid || 0), 0), 0);
+  const companyExpenses = monthExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const spent = companyExpenses
-    + state.payments.reduce((sum, payment) => sum + payment.amount, 0);
+    + monthPayments.reduce((sum, payment) => sum + payment.amount, 0);
   els.cashMetric.textContent = formatMoney(state.cashOnHand);
   els.payableMetric.textContent = formatMoney(payable);
   els.spentMetric.textContent = formatMoney(spent);
@@ -2061,6 +2194,11 @@ function render() {
 }
 
 function renderTables() {
+  const monthIncomes = filterByMonth(state.incomes, "date");
+  const monthInvoices = filterByMonth(state.invoices, "date");
+  const monthExpenses = filterByMonth(state.expenses, "date");
+  const monthPayments = filterByMonth(state.payments, "date");
+  const monthWalletTransfers = filterByMonth(state.walletTransfers, "date");
   const expenseRules = state.outgoingRules.filter((rule) => rule.target === "personal_expenses");
   els.expenseRuleRows.innerHTML = rowsOrEmpty(expenseRules.map((rule) => `
     <tr>
@@ -2097,35 +2235,13 @@ function renderTables() {
     </tr>`), 3)
     : `<tr><td colspan="3">输入 OCR 字眼后才显示相关规则。</td></tr>`;
 
-  els.incomeRows.innerHTML = rowsOrEmpty(state.incomes.map((income) => `
-    <tr>
-      <td>${income.date}</td>
-      <td>${escapeHtml(income.payer)}</td>
-      <td>${escapeHtml(income.reference)}</td>
-      <td class="money paid">${formatMoney(income.amount)}</td>
-    </tr>`), 4);
+  els.incomeRows.innerHTML = rowsOrEmpty(groupIncomeRows(monthIncomes).map(renderIncomeGroupRow), 4);
 
-  els.invoiceRows.innerHTML = rowsOrEmpty(state.invoices.map((invoice) => `
-    <tr>
-      <td>${escapeHtml(invoice.supplier)}</td>
-      <td>${escapeHtml(invoice.invoiceNo)}</td>
-      <td>${invoice.date}</td>
-      <td class="money">${formatMoney(invoice.total)}</td>
-      <td class="money">${formatMoney(invoice.paid || 0)}</td>
-      <td class="${invoice.status === "Paid" ? "paid" : "pending"}">${invoice.status}</td>
-      <td><button class="detail-actions-btn" data-view-invoice="${escapeHtml(invoice.id)}" type="button">查看单据</button></td>
-    </tr>`), 7);
+  els.invoiceRows.innerHTML = rowsOrEmpty(groupInvoiceRows(monthInvoices).map(renderInvoiceGroupRow), 7);
 
-  const groupedExpenses = groupExpenseRows(state.expenses);
-  els.expenseRows.innerHTML = rowsOrEmpty(groupedExpenses.map((expense) => `
-    <tr>
-      <td>${expense.date}</td>
-      <td>${escapeHtml(expense.merchant)}</td>
-      <td><span class="chip">${expense.category}</span></td>
-      <td class="money">${formatMoney(expense.amount)}</td>
-    </tr>`), 4);
+  els.expenseRows.innerHTML = rowsOrEmpty(groupExpenseRows(monthExpenses).map(renderExpenseGroupRow), 4);
 
-  els.walletTransferRows.innerHTML = rowsOrEmpty(state.walletTransfers.map((transfer) => `
+  els.walletTransferRows.innerHTML = rowsOrEmpty(monthWalletTransfers.map((transfer) => `
     <tr>
       <td>${transfer.date}</td>
       <td>${escapeHtml(transfer.payee)}</td>
@@ -2133,8 +2249,8 @@ function renderTables() {
       <td class="money">${formatMoney(transfer.amount)}</td>
     </tr>`), 4);
 
-  const expenseTotal = state.expenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const expenseByCategory = state.expenses.reduce((groups, expense) => {
+  const expenseTotal = monthExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const expenseByCategory = monthExpenses.reduce((groups, expense) => {
     const category = expense.category || "其他";
     groups[category] = (groups[category] || 0) + expense.amount;
     return groups;
@@ -2153,7 +2269,7 @@ function renderTables() {
     });
   els.expensePercentRows.innerHTML = rowsOrEmpty(expensePercentRows, 4);
 
-  els.paymentRows.innerHTML = rowsOrEmpty(state.payments.map((payment) => {
+  els.paymentRows.innerHTML = rowsOrEmpty(monthPayments.map((payment) => {
     const invoice = state.invoices.find((item) => item.id === payment.matchedInvoiceId);
     return `<tr>
       <td>${payment.date}</td>
@@ -2354,6 +2470,20 @@ function generateSettlementPdf() {
 
 function rowsOrEmpty(rows, colspan) {
   return rows.length ? rows.join("") : `<tr><td colspan="${colspan}">暂无记录</td></tr>`;
+}
+
+function currentMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function filterByMonth(records, dateKey) {
+  return records.filter((record) => monthFromDate(record?.[dateKey]) === selectedMonth);
+}
+
+function monthFromDate(value) {
+  const text = String(value || "");
+  const match = text.match(/^(\d{4})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}` : currentMonth();
 }
 
 function typeLabel(type) {
