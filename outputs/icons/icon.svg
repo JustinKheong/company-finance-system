@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="公司财务">
+  <rect width="512" height="512" rx="92" fill="#0f766e"/>
+  <path d="M112 154c0-26.5 21.5-48 48-48h192c26.5 0 48 21.5 48 48v204c0 26.5-21.5 48-48 48H160c-26.5 0-48-21.5-48-48V154z" fill="#ffffff"/>
+  <path d="M160 168h192v46H160v-46z" fill="#d9f0ec"/>
+  <path d="M170 254h60v48h-60v-48zm112 0h60v48h-60v-48zM170 326h60v48h-60v-48zm112 0h60v48h-60v-48z" fill="#0f766e"/>
+  <path d="M256 82l44 44h-88l44-44z" fill="#ffe2dc"/>
+  <text x="256" y="238" text-anchor="middle" font-family="Arial, sans-serif" font-size="54" font-weight="800" fill="#14201d">RM</text>
+</svg>

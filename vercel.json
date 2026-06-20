@@ -1,8 +1,26 @@
 {
   "version": 2,
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache" },
+        { "key": "Service-Worker-Allowed", "value": "/" }
+      ]
+    },
+    {
+      "source": "/manifest.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/manifest+json" }
+      ]
+    }
+  ],
   "rewrites": [
     { "source": "/", "destination": "/outputs/index.html" },
     { "source": "/app.js", "destination": "/outputs/app.js" },
-    { "source": "/styles.css", "destination": "/outputs/styles.css" }
+    { "source": "/styles.css", "destination": "/outputs/styles.css" },
+    { "source": "/manifest.json", "destination": "/outputs/manifest.json" },
+    { "source": "/sw.js", "destination": "/outputs/sw.js" },
+    { "source": "/icons/:path*", "destination": "/outputs/icons/:path*" }
   ]
 }

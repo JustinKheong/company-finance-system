@@ -2757,6 +2757,7 @@ function escapeHtml(value) {
 initializeApp();
 
 async function initializeApp() {
+  registerServiceWorker();
   fixKnownUnknownSuppliers();
   rebuildInventoryFromInvoices();
   reapplyIncomeRules();
@@ -2766,4 +2767,13 @@ async function initializeApp() {
   await restorePersistedAuthSession();
   await loadStateFromSupabase();
   refreshConfigStatus();
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // The app still works normally if PWA registration is unavailable.
+    });
+  });
 }
