@@ -2323,9 +2323,9 @@ function render() {
   const spent = companyExpenses
     + monthPayments.reduce((sum, payment) => sum + payment.amount, 0);
   els.cashMetric.textContent = formatMoney(state.cashOnHand);
-  els.payableMetric.textContent = formatMoney(payable);
-  els.spentMetric.textContent = formatMoney(spent);
-  els.companyExpenseMetric.textContent = formatMoney(companyExpenses);
+  els.payableMetric.textContent = formatOutflowMoney(payable);
+  els.spentMetric.textContent = formatOutflowMoney(spent);
+  els.companyExpenseMetric.textContent = formatOutflowMoney(companyExpenses);
   els.availableMetric.textContent = formatMoney(state.cashOnHand - payable);
   renderTables();
   updateRepaymentMatchPanel();
@@ -2715,6 +2715,11 @@ function formatValue(key, value) {
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR" }).format(Number(value || 0));
+}
+
+function formatOutflowMoney(value) {
+  const amount = Math.abs(Number(value || 0));
+  return formatMoney(amount === 0 ? 0 : -amount);
 }
 
 function toMoney(value) {
