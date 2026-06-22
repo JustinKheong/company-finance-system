@@ -250,12 +250,30 @@
           </section>
         </div>
         <div id="payments" class="tab-panel">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>日期</th><th>收款人</th><th>Reference</th><th>金额</th><th>匹配</th></tr></thead>
-              <tbody id="paymentRows"></tbody>
-            </table>
-          </div>
+          <section class="rules-section">
+            <div class="rules-head">
+              <h3>等待匹配</h3>
+              <p>进账里选择“还账”后，如果暂时找不到对应 Supplier / Invoice，会先放在这里。</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>日期</th><th>收款人</th><th>Reference</th><th>金额</th><th>匹配</th></tr></thead>
+                <tbody id="pendingPaymentRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="rules-section">
+            <div class="rules-head">
+              <h3>已匹配付款</h3>
+              <p>已经对应到待付款 Invoice 的还账记录。</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>日期</th><th>收款人</th><th>Reference</th><th>金额</th><th>匹配</th></tr></thead>
+                <tbody id="matchedPaymentRows"></tbody>
+              </table>
+            </div>
+          </section>
         </div>
         <div id="inventory" class="tab-panel">
           <div class="rename-rules">

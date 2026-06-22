@@ -107,7 +107,8 @@ const els = {
   expenseRows: document.querySelector("#expenseRows"),
   walletTransferRows: document.querySelector("#walletTransferRows"),
   expensePercentRows: document.querySelector("#expensePercentRows"),
-  paymentRows: document.querySelector("#paymentRows"),
+  pendingPaymentRows: document.querySelector("#pendingPaymentRows"),
+  matchedPaymentRows: document.querySelector("#matchedPaymentRows"),
   inventoryRows: document.querySelector("#inventoryRows"),
   inventorySearch: document.querySelector("#inventorySearch"),
   inventorySearchStatus: document.querySelector("#inventorySearchStatus"),
@@ -1324,7 +1325,7 @@ function updateRepaymentMatchPanel() {
 
   const unpaidInvoices = getUnpaidInvoices();
   const matchedInvoiceId = pendingRecord?.matchedInvoiceId || "";
-  const autoLabel = matchedInvoiceId ? "自动匹配已找到，可改选其他 Invoice" : "自动匹配";
+  const autoLabel = matchedInvoiceId ? "自动匹配已找到，可改选其他 Invoice" : "自动匹配；找不到就等待匹配";
   const options = repaymentInvoiceOptions(autoLabel);
 
   els.repaymentInvoiceSelect.innerHTML = options.join("");
@@ -1338,7 +1339,7 @@ function updateRepaymentMatchPanel() {
   updateManualRepaymentSaveState();
 }
 
-function repaymentInvoiceOptions(autoLabel = "自动匹配") {
+function repaymentInvoiceOptions(autoLabel = "自动匹配；找不到就等待匹配") {
   return [
     `<option value="__auto__">${escapeHtml(autoLabel)}</option>`,
     ...getUnpaidInvoices().map((invoice) => {
@@ -1894,6 +1895,16 @@ function renderExpenseGroupRow(group) {
     </tr>`;
 }
 
+function renderPaymentRow({ payment, invoice }) {
+  return `<tr>
+    <td>${payment.date}</td>
+    <td>${escapeHtml(payment.recipient)}</td>
+    <td>${escapeHtml(payment.reference)}</td>
+    <td class="money">${formatMoney(payment.amount)}</td>
+    <td class="${invoice ? "paid" : "unmatched"}">${invoice ? escapeHtml(invoice.invoiceNo) : "等待匹配"}</td>
+  </tr>`;
+}
+
 function classifyText(text) {
   const lower = text.toLowerCase();
   const paymentScore = score(lower, ["transfer", "duitnow", "reference", "ref no", "recipient", "paid"]);
@@ -2408,16 +2419,14 @@ function renderTables() {
     });
   els.expensePercentRows.innerHTML = rowsOrEmpty(expensePercentRows, 4);
 
-  els.paymentRows.innerHTML = rowsOrEmpty(monthPayments.map((payment) => {
-    const invoice = state.invoices.find((item) => item.id === payment.matchedInvoiceId);
-    return `<tr>
-      <td>${payment.date}</td>
-      <td>${escapeHtml(payment.recipient)}</td>
-      <td>${escapeHtml(payment.reference)}</td>
-      <td class="money">${formatMoney(payment.amount)}</td>
-      <td class="${invoice ? "paid" : "unmatched"}">${invoice ? escapeHtml(invoice.invoiceNo) : "未匹配"}</td>
-    </tr>`;
-  }), 5);
+  const paymentsWithInvoices = monthPayments.map((payment) => ({
+    payment,
+    invoice: state.invoices.find((item) => item.id === payment.matchedInvoiceId) || null
+  }));
+  const waitingPayments = paymentsWithInvoices.filter(({ invoice }) => !invoice);
+  const matchedPayments = paymentsWithInvoices.filter(({ invoice }) => invoice);
+  els.pendingPaymentRows.innerHTML = rowsOrEmpty(waitingPayments.map(renderPaymentRow), 5);
+  els.matchedPaymentRows.innerHTML = rowsOrEmpty(matchedPayments.map(renderPaymentRow), 5);
 
   const inventoryItems = Object.entries(state.inventory);
   const inventoryQuery = normalizeSearch(els.inventorySearch.value);
