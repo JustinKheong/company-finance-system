@@ -156,6 +156,9 @@ els.saveApiKeyBtn.addEventListener("click", saveApiKey);
 els.inventorySearch.addEventListener("input", renderTables);
 els.inventoryRows.addEventListener("input", handleCostCalculatorInput);
 els.ruleMatchInput.addEventListener("input", renderTables);
+els.incomeRuleMatchInput.addEventListener("input", renderTables);
+els.outgoingRuleMatchInput.addEventListener("input", renderTables);
+els.expenseRuleMatchInput.addEventListener("input", renderTables);
 els.addRuleBtn.addEventListener("click", addRenameRule);
 els.renameRuleRows.addEventListener("click", handleRuleTableClick);
 els.addIncomeRuleBtn.addEventListener("click", addIncomeRule);
@@ -2721,28 +2724,46 @@ function renderTables() {
   const monthPayments = filterByMonth(state.payments, "date");
   const monthWalletTransfers = filterByMonth(state.walletTransfers, "date");
   const expenseRules = state.outgoingRules.filter((rule) => rule.target === "personal_expenses");
-  els.expenseRuleRows.innerHTML = rowsOrEmpty(expenseRules.map((rule) => `
+  const expenseRuleQuery = normalizeSearch(els.expenseRuleMatchInput.value);
+  const visibleExpenseRules = expenseRuleQuery
+    ? expenseRules.filter((rule) => normalizeSearch(`${rule.match} ${expenseRuleDisplayName(rule)} ${rule.name}`).includes(expenseRuleQuery))
+    : [];
+  els.expenseRuleRows.innerHTML = expenseRuleQuery
+    ? rowsOrEmpty(visibleExpenseRules.map((rule) => `
     <tr>
       <td>${escapeHtml(rule.match)}</td>
       <td>${escapeHtml(expenseRuleDisplayName(rule))}</td>
       <td>${escapeHtml(rule.name)}</td>
       <td><button class="delete-rule-btn" data-delete-expense-rule="${escapeHtml(rule.id)}" type="button">删除</button></td>
-    </tr>`), 4);
+    </tr>`), 4)
+    : `<tr><td colspan="4">输入字眼后才显示相关规则。</td></tr>`;
 
-  els.incomeRuleRows.innerHTML = rowsOrEmpty(state.incomeRules.map((rule) => `
+  const incomeRuleQuery = normalizeSearch(els.incomeRuleMatchInput.value);
+  const visibleIncomeRules = incomeRuleQuery
+    ? state.incomeRules.filter((rule) => normalizeSearch(`${rule.match} ${rule.source}`).includes(incomeRuleQuery))
+    : [];
+  els.incomeRuleRows.innerHTML = incomeRuleQuery
+    ? rowsOrEmpty(visibleIncomeRules.map((rule) => `
     <tr>
       <td>${escapeHtml(rule.match)}</td>
       <td>${escapeHtml(rule.source)}</td>
       <td><button class="delete-rule-btn" data-delete-income-rule="${escapeHtml(rule.id)}" type="button">删除</button></td>
-    </tr>`), 3);
+    </tr>`), 3)
+    : `<tr><td colspan="3">输入字眼后才显示相关规则。</td></tr>`;
 
-  els.outgoingRuleRows.innerHTML = rowsOrEmpty(state.outgoingRules.map((rule) => `
+  const outgoingRuleQuery = normalizeSearch(els.outgoingRuleMatchInput.value);
+  const visibleOutgoingRules = outgoingRuleQuery
+    ? state.outgoingRules.filter((rule) => normalizeSearch(`${rule.match} ${rule.target} ${rule.name}`).includes(outgoingRuleQuery))
+    : [];
+  els.outgoingRuleRows.innerHTML = outgoingRuleQuery
+    ? rowsOrEmpty(visibleOutgoingRules.map((rule) => `
     <tr>
       <td>${escapeHtml(rule.match)}</td>
       <td>${rule.target === "personal_expenses" ? "个人支出" : "Supplier Invoice"}</td>
       <td>${escapeHtml(rule.name)}</td>
       <td><button class="delete-rule-btn" data-delete-outgoing-rule="${escapeHtml(rule.id)}" type="button">删除</button></td>
-    </tr>`), 4);
+    </tr>`), 4)
+    : `<tr><td colspan="4">输入字眼后才显示相关规则。</td></tr>`;
 
   const renameRuleQuery = normalizeSearch(els.ruleMatchInput.value);
   const visibleRenameRules = renameRuleQuery
