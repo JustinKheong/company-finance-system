@@ -183,6 +183,29 @@
           </div>
         </div>
         <div id="incomes" class="tab-panel">
+          <section class="rules-section">
+            <div class="rules-head">
+              <h3>进账命名规则</h3>
+              <p>看到指定字眼时，以后进账记录会自动改成你设定的名字。</p>
+            </div>
+            <div class="rule-form">
+              <label class="search-field">
+                <span>看到字眼</span>
+                <input id="incomeRuleMatchInput" type="text" placeholder="IBG Credit / IMEPS / 店名" />
+              </label>
+              <label class="search-field">
+                <span>改成名字</span>
+                <input id="incomeRuleSourceInput" type="text" placeholder="Lazada / Shopee / Customer A" />
+              </label>
+              <button id="addIncomeRuleBtn" class="secondary-btn" type="button">新增规则</button>
+            </div>
+            <div class="table-wrap rules-table-wrap">
+              <table class="rules-table">
+                <thead><tr><th>看到字眼</th><th>改成名字</th><th>操作</th></tr></thead>
+                <tbody id="incomeRuleRows"></tbody>
+              </table>
+            </div>
+          </section>
           <div class="table-wrap">
             <table>
               <thead><tr><th>日期</th><th>付款人</th><th>Reference</th><th>金额</th></tr></thead>
@@ -316,30 +339,6 @@
           </div>
         </div>
         <div id="rules" class="tab-panel">
-          <section class="rules-section">
-            <div class="rules-head">
-              <h3>进账来源规则</h3>
-              <p>OCR 看到指定字眼时，自动换成你想要的进账名字。</p>
-            </div>
-            <div class="rule-form">
-              <label class="search-field">
-                <span>看到字眼</span>
-                <input id="incomeRuleMatchInput" type="text" placeholder="IBG Credit" />
-              </label>
-              <label class="search-field">
-                <span>改成名字</span>
-                <input id="incomeRuleSourceInput" type="text" placeholder="Lazada" />
-              </label>
-              <button id="addIncomeRuleBtn" class="secondary-btn" type="button">新增规则</button>
-            </div>
-            <div class="table-wrap rules-table-wrap">
-              <table class="rules-table">
-                <thead><tr><th>看到字眼</th><th>改成名字</th><th>操作</th></tr></thead>
-                <tbody id="incomeRuleRows"></tbody>
-              </table>
-            </div>
-          </section>
-
           <section class="rules-section">
             <div class="rules-head">
               <h3>出账分类规则</h3>
