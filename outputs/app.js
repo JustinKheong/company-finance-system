@@ -165,6 +165,7 @@ els.outgoingRuleRows.addEventListener("click", handleRuleTableClick);
 els.addExpenseRuleBtn.addEventListener("click", addExpenseRule);
 els.expenseRuleRows.addEventListener("click", handleRuleTableClick);
 els.invoiceRows.addEventListener("click", handleInvoiceRowClick);
+els.pendingPaymentRows.addEventListener("click", handlePendingPaymentAction);
 els.closeInvoiceDialogBtn.addEventListener("click", () => els.invoiceDialog.close());
 
 document.querySelectorAll(".segment-button").forEach((button) => {
@@ -1479,6 +1480,72 @@ function openInvoiceDialog(invoice) {
   els.invoiceDialog.showModal();
 }
 
+async function handlePendingPaymentAction(event) {
+  const button = event.target.closest("[data-claim-payment]");
+  if (!button) return;
+  const paymentId = button.dataset.claimPayment;
+  const select = button.closest("tr")?.querySelector("[data-pending-payment-target]");
+  const target = select?.value || "__claim__";
+  if (target === "__claim__") {
+    els.uploadStatus.textContent = "这笔记录继续留在等待认领。";
+    els.uploadStatus.className = "upload-status ready";
+    return;
+  }
+
+  const payment = state.payments.find((item) => item.id === paymentId);
+  if (!payment) return;
+
+  lastSaveSnapshot = structuredClone(state);
+  if (target === "__expense__") {
+    movePendingPaymentToExpense(payment);
+    els.uploadStatus.textContent = "已把等待认领记录转成个人支出。正在保存...";
+  } else {
+    claimPaymentToInvoice(payment, target);
+    els.uploadStatus.textContent = "已把等待认领记录认领到 Invoice。正在保存...";
+  }
+  els.uploadStatus.className = "upload-status ready";
+  render();
+
+  const persisted = await saveState();
+  if (!persisted) {
+    state = structuredClone(lastSaveSnapshot);
+    lastSaveSnapshot = null;
+    render();
+    els.resultBox.innerHTML = `
+      <div class="notice-box">
+        <strong>保存失败</strong>
+        <p>这次认领没有写入 Supabase，请检查网络或登录状态。</p>
+      </div>`;
+    return;
+  }
+  setUndoButtonsVisible(true);
+  els.uploadStatus.textContent = "等待认领记录已更新并保存到 Supabase。";
+}
+
+function movePendingPaymentToExpense(payment) {
+  state.payments = state.payments.filter((item) => item.id !== payment.id);
+  state.expenses.push(applyExpenseRule({
+    id: crypto.randomUUID(),
+    type: "personal_expenses",
+    merchant: payment.recipient || "Unknown Merchant",
+    date: payment.date || new Date().toISOString().slice(0, 10),
+    category: categorizeExpense(`${payment.recipient || ""} ${payment.reference || ""}`),
+    amount: toMoney(payment.amount),
+    note: payment.reference || ""
+  }));
+}
+
+function claimPaymentToInvoice(payment, invoiceId) {
+  const invoice = state.invoices.find((item) => item.id === invoiceId);
+  if (!invoice) return;
+  payment.matchedInvoiceId = invoice.id;
+  payment.waitingClaim = false;
+  payment.claimedAt = new Date().toISOString();
+  const appliedAmount = Math.min(payment.amount || 0, invoiceRemaining(invoice));
+  invoice.paid = toMoney((invoice.paid || 0) + appliedAmount);
+  invoice.status = invoice.paid + 0.01 >= invoice.total ? "Paid" : "Partial";
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2020,6 +2087,35 @@ function renderPaymentRow({ payment, invoice }) {
     <td class="money">${formatMoney(payment.amount)}</td>
     <td class="${invoice ? "paid" : "unmatched"}">${invoice ? escapeHtml(invoice.invoiceNo) : "等待认领"}</td>
   </tr>`;
+}
+
+function renderPendingPaymentRow({ payment, invoice }) {
+  return `<tr>
+    <td>${payment.date}</td>
+    <td>${escapeHtml(payment.recipient)}</td>
+    <td>${escapeHtml(payment.reference)}</td>
+    <td class="money">${formatMoney(payment.amount)}</td>
+    <td class="${invoice ? "paid" : "unmatched"}">${invoice ? escapeHtml(invoice.invoiceNo) : "等待认领"}</td>
+    <td>
+      <select class="destination-select" data-pending-payment-target="${escapeHtml(payment.id)}">
+        ${pendingPaymentTargetOptions(payment)}
+      </select>
+    </td>
+    <td><button class="detail-actions-btn" data-claim-payment="${escapeHtml(payment.id)}" type="button">确认</button></td>
+  </tr>`;
+}
+
+function pendingPaymentTargetOptions(payment) {
+  const invoiceOptions = getUnpaidInvoices().map((invoice) => {
+    const remaining = invoiceRemaining(invoice);
+    const label = `${invoice.supplier} - ${invoice.invoiceNo} - 剩余 ${formatRecordMoney(invoice, remaining)}`;
+    return `<option value="${escapeHtml(invoice.id)}">${escapeHtml(label)}</option>`;
+  }).join("");
+  return [
+    `<option value="__claim__">继续等待认领</option>`,
+    invoiceOptions,
+    `<option value="__expense__">转成个人支出</option>`
+  ].join("");
 }
 
 function classifyText(text) {
@@ -2701,7 +2797,7 @@ function renderTables() {
   }));
   const waitingPayments = paymentsWithInvoices.filter(({ invoice }) => !invoice);
   const matchedPayments = paymentsWithInvoices.filter(({ invoice }) => invoice);
-  els.pendingPaymentRows.innerHTML = rowsOrEmpty(waitingPayments.map(renderPaymentRow), 5);
+  els.pendingPaymentRows.innerHTML = rowsOrEmpty(waitingPayments.map(renderPendingPaymentRow), 7);
   els.matchedPaymentRows.innerHTML = rowsOrEmpty(matchedPayments.map(renderPaymentRow), 5);
 
   const inventoryItems = Object.entries(state.inventory);
