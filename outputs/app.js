@@ -35,10 +35,7 @@ const defaultState = {
   expenses: [],
   payments: [],
   walletTransfers: [],
-  incomeRules: [
-    { id: "default-ibg-lazada", match: "IBG Credit", source: "Lazada" },
-    { id: "default-imeps-shopee", match: "IMEPS", source: "Shopee" }
-  ],
+  incomeRules: [],
   outgoingRules: [
     { id: "default-water", match: "水费", target: "personal_expenses", name: "水费" },
     { id: "default-toll", match: "toll", target: "personal_expenses", name: "Toll" },
@@ -246,7 +243,7 @@ function normalizeState(value) {
     expenses: expenses.filter((expense) => !isTouchNgoTransferExpense(expense)),
     payments: Array.isArray(value?.payments) ? value.payments : [],
     walletTransfers: [...existingTransfers, ...migratedTransfers],
-    incomeRules: mergeDefaultRules(value?.incomeRules, defaultState.incomeRules),
+    incomeRules: incomeRulesWithoutLegacyDefaults(value?.incomeRules),
     outgoingRules: mergeDefaultRules(value?.outgoingRules, defaultState.outgoingRules),
     renameRules: Array.isArray(value?.renameRules) ? value.renameRules : structuredClone(defaultState.renameRules),
     costCalculators: value?.costCalculators || {},
@@ -266,6 +263,11 @@ function mergeDefaultRules(savedRules, defaultRules) {
     ...existing,
     ...defaultRules.filter((rule) => !existingIds.has(rule.id))
   ];
+}
+
+function incomeRulesWithoutLegacyDefaults(savedRules) {
+  const legacyDefaultIds = new Set(["default-ibg-lazada", "default-imeps-shopee"]);
+  return Array.isArray(savedRules) ? savedRules.filter((rule) => !legacyDefaultIds.has(rule.id)) : [];
 }
 
 function saveState() {
@@ -1770,7 +1772,7 @@ function applyTransactionRules(parsed, sourceText = "") {
   }
 
   if (parsed.type === "income") {
-    const rule = state.incomeRules.find((item) => haystack.includes(normalizeSearch(item.match)));
+    const rule = findIncomeRule(haystack);
     return rule ? { ...parsed, payer: rule.source } : applyIncomeRuleToTransaction(parsed);
   }
 
@@ -1888,7 +1890,7 @@ function findPinduoduoProduct(text) {
 
 function applyIncomeRuleToTransaction(transaction) {
   const haystack = normalizeSearch(`${transaction.description || ""} ${transaction.payer || ""} ${transaction.reference || ""}`);
-  const rule = state.incomeRules.find((item) => haystack.includes(normalizeSearch(item.match)));
+  const rule = findIncomeRule(haystack);
   if (!rule) return transaction;
   if (transaction.type === "income") return { ...transaction, payer: rule.source };
   return { ...transaction, originalDescription: transaction.originalDescription || transaction.description, description: rule.source };
@@ -1896,13 +1898,19 @@ function applyIncomeRuleToTransaction(transaction) {
 
 function applyIncomeRuleToIncome(income) {
   const originalPayer = income.originalPayer || income.payer || "Unknown Payer";
-  const haystack = normalizeSearch(`${originalPayer} ${income.reference || ""}`);
-  const rule = state.incomeRules.find((item) => haystack.includes(normalizeSearch(item.match)));
+  const currentPayer = income.payer || "";
+  const haystack = normalizeSearch(`${originalPayer} ${currentPayer} ${income.reference || ""}`);
+  const rule = findIncomeRule(haystack);
   return {
     ...income,
     originalPayer,
     payer: rule ? rule.source : originalPayer
   };
+}
+
+function findIncomeRule(haystack) {
+  const text = normalizeSearch(haystack);
+  return [...state.incomeRules].reverse().find((item) => text.includes(normalizeSearch(item.match)));
 }
 
 function reapplyIncomeRules() {
