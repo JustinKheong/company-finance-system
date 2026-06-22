@@ -1003,6 +1003,7 @@ async function analyzeCurrentDocument() {
   renderResult(parsed);
   els.uploadStatus.textContent = "识别完成。请检查资料，然后按保存记录。";
   els.uploadStatus.className = "upload-status ready";
+  showDuplicateDetectedNotice(parsed);
 }
 
 async function recognizeUploadedFile() {
@@ -1041,6 +1042,7 @@ async function recognizeUploadedFile() {
       els.generatePdfBtn.hidden = false;
       els.uploadStatus.textContent = "对账资料已识别。可按保存记录进入待付款，也可以生成 PDF。";
       els.uploadStatus.className = "upload-status ready";
+      showDuplicateDetectedNotice(parsed);
       return;
     }
     if (parsed.type === "supplier_invoice") {
@@ -1056,6 +1058,7 @@ async function recognizeUploadedFile() {
     renderResult(parsed);
     els.uploadStatus.textContent = "AI/OCR 已完成。请检查资料，然后按保存记录。";
     els.uploadStatus.className = "upload-status ready";
+    showDuplicateDetectedNotice(parsed);
   } catch (error) {
     els.uploadStatus.textContent = "AI/OCR 识别失败。";
     els.uploadStatus.className = "upload-status warning";
@@ -1087,6 +1090,19 @@ function clearPendingRecord() {
   updateRepaymentMatchPanel();
 }
 
+function showDuplicateDetectedNotice(record) {
+  const duplicate = findDuplicateSavedRecord(structuredClone(record));
+  if (!duplicate) return;
+  els.detectedType.textContent = "重复凭证";
+  els.uploadStatus.textContent = "这个凭证已经保存过了。";
+  els.uploadStatus.className = "upload-status warning";
+  els.resultBox.insertAdjacentHTML("afterbegin", `
+    <div class="notice-box">
+      <strong>这个凭证已经保存过了</strong>
+      <p>${escapeHtml(duplicate.message)}</p>
+    </div>`);
+}
+
 async function savePendingRecord() {
   const backupRecord = pendingRecord || readRecordFromRenderedResult() || buildManualRepaymentRecord();
   if (!backupRecord) {
@@ -1106,6 +1122,19 @@ async function savePendingRecord() {
   if (record.type === "payment_proof" && (!record.amount || record.amount <= 0)) {
     els.uploadStatus.textContent = "还账金额是 0。请选择要还的 Invoice，系统会自动用剩余未付金额。";
     els.uploadStatus.className = "upload-status warning";
+    return;
+  }
+  const duplicate = findDuplicateSavedRecord(record);
+  if (duplicate) {
+    els.detectedType.textContent = "重复凭证";
+    els.uploadStatus.textContent = "这个凭证已经保存过了。";
+    els.uploadStatus.className = "upload-status warning";
+    els.resultBox.innerHTML = `
+      <div class="notice-box">
+        <strong>这个凭证已经保存过了</strong>
+        <p>${escapeHtml(duplicate.message)}</p>
+        <p>系统没有重复写入 Supabase，所以金额不会被计算两次。</p>
+    </div>`;
     return;
   }
   lastSaveSnapshot = structuredClone(state);
@@ -1976,6 +2005,122 @@ function parsePaymentProof(text) {
   return payment;
 }
 
+function findDuplicateSavedRecord(record) {
+  if (!record) return null;
+  if (record.type === "supplier_invoice") return duplicateSupplierInvoice(record);
+  if (record.type === "settlement_statement") return duplicateSettlementStatement(record);
+  if (record.type === "income") return duplicateIncome(record);
+  if (record.type === "payment_proof") return duplicatePayment(record);
+  if (record.type === "personal_expenses") return duplicateExpense(record);
+  if (record.type === "personal_expenses_batch") return duplicateExpenseBatch(record);
+  if (record.type === "transaction_batch") return duplicateTransactionBatch(record);
+  return null;
+}
+
+function duplicateSupplierInvoice(record) {
+  const duplicate = state.invoices.find((invoice) => {
+    const sameInvoiceNo = normalizeSearch(invoice.invoiceNo) && normalizeSearch(invoice.invoiceNo) === normalizeSearch(record.invoiceNo);
+    const sameSupplier = normalizeSearch(invoice.supplier) === normalizeSearch(record.supplier);
+    const sameAmountDate = sameSupplier && sameDate(invoice.date, record.date) && sameMoney(invoice.total, record.total);
+    return (sameSupplier && sameInvoiceNo) || sameAmountDate;
+  });
+  return duplicate ? duplicateNotice("待付款 Invoice", `${duplicate.supplier} / ${duplicate.invoiceNo} / ${formatMoney(duplicate.total)}`) : null;
+}
+
+function duplicateSettlementStatement(record) {
+  const invoice = settlementToInvoice({ ...record });
+  const duplicate = state.invoices.find((item) => {
+    const existingSettlement = item.settlementStatement || {};
+    return normalizeSearch(item.supplier) === normalizeSearch(invoice.supplier)
+      && sameDate(item.date, invoice.date)
+      && sameMoney(item.total, invoice.total)
+      && (
+        normalizeSearch(item.invoiceNo) === normalizeSearch(invoice.invoiceNo)
+        || normalizeSearch(existingSettlement.otherCompany) === normalizeSearch(record.otherCompany)
+      );
+  });
+  return duplicate ? duplicateNotice("对账 / 待付款 Invoice", `${duplicate.supplier} / ${duplicate.invoiceNo} / ${formatMoney(duplicate.total)}`) : null;
+}
+
+function duplicateIncome(record) {
+  const duplicate = state.incomes.find((income) => {
+    const sameReference = meaningfulText(record.reference) && normalizeSearch(income.reference) === normalizeSearch(record.reference);
+    const samePayer = normalizeSearch(income.payer) === normalizeSearch(record.payer)
+      || normalizeSearch(income.originalPayer) === normalizeSearch(record.originalPayer || record.payer);
+    return sameDate(income.date, record.date)
+      && sameMoney(income.amount, record.amount)
+      && (sameReference || samePayer);
+  });
+  return duplicate ? duplicateNotice("进账记录", `${duplicate.payer} / ${duplicate.reference} / ${formatMoney(duplicate.amount)}`) : null;
+}
+
+function duplicatePayment(record) {
+  const duplicate = state.payments.find((payment) => {
+    const sameReference = meaningfulText(record.reference) && normalizeSearch(payment.reference) === normalizeSearch(record.reference);
+    const sameRecipient = normalizeSearch(payment.recipient) === normalizeSearch(record.recipient);
+    const sameInvoice = record.matchedInvoiceId && payment.matchedInvoiceId === record.matchedInvoiceId;
+    return sameDate(payment.date, record.date)
+      && sameMoney(payment.amount, record.amount)
+      && (sameReference || sameRecipient || sameInvoice);
+  });
+  return duplicate ? duplicateNotice("还账 / 付款证明", `${duplicate.recipient} / ${duplicate.reference} / ${formatMoney(duplicate.amount)}`) : null;
+}
+
+function duplicateExpense(record) {
+  const duplicate = state.expenses.find((expense) => sameDate(expense.date, record.date)
+    && sameMoney(expense.amount, record.amount)
+    && normalizeSearch(expense.merchant) === normalizeSearch(record.merchant)
+    && normalizeSearch(expense.category) === normalizeSearch(record.category));
+  return duplicate ? duplicateNotice("个人支出", `${duplicate.merchant} / ${duplicate.category} / ${formatMoney(duplicate.amount)}`) : null;
+}
+
+function duplicateExpenseBatch(record) {
+  applyExpenseBatchDestinations(record);
+  const expenses = record.expenses || [];
+  if (!expenses.length) return null;
+  const allDuplicate = expenses.every((expense) => {
+    if (expense.destination === "materials") return duplicateSupplierInvoice(expenseToMaterialInvoice(expense));
+    if (expense.destination === "touchngo") return duplicateWalletTransfer({
+      date: expense.date,
+      payee: expense.merchant || "Touch 'n Go",
+      reference: expense.note || "Bank to Touch 'n Go",
+      amount: expense.amount
+    });
+    return duplicateExpense(expense);
+  });
+  return allDuplicate ? duplicateNotice("多笔个人支出", `${expenses.length} 笔明细都已经保存过`) : null;
+}
+
+function duplicateTransactionBatch(record) {
+  applyTransactionBatchDestinations(record);
+  const transactions = record.transactions || [];
+  if (!transactions.length) return null;
+  const allDuplicate = transactions.every((transaction) => {
+    if (transaction.destination === "expense") return duplicateExpense(transactionToExpense(transaction));
+    if (transaction.destination === "repayment") return duplicatePayment(transactionToPayment(transaction));
+    return duplicateIncome(transactionToIncome(transaction));
+  });
+  return allDuplicate ? duplicateNotice("多笔交易", `${transactions.length} 笔明细都已经保存过`) : null;
+}
+
+function duplicateWalletTransfer(record) {
+  const duplicate = state.walletTransfers.find((transfer) => {
+    const sameReference = meaningfulText(record.reference) && normalizeSearch(transfer.reference) === normalizeSearch(record.reference);
+    const samePayee = normalizeSearch(transfer.payee) === normalizeSearch(record.payee);
+    return sameDate(transfer.date, record.date)
+      && sameMoney(transfer.amount, record.amount)
+      && (sameReference || samePayee);
+  });
+  return duplicate ? duplicateNotice("Touch 'n Go 转账记录", `${duplicate.payee} / ${duplicate.reference} / ${formatMoney(duplicate.amount)}`) : null;
+}
+
+function duplicateNotice(section, detail) {
+  return {
+    section,
+    message: `已经在「${section}」找到相同记录：${detail}`
+  };
+}
+
 function recordParsedDocument(parsed) {
   if (parsed.type === "settlement_statement") {
     const invoice = settlementToInvoice(parsed);
@@ -2733,6 +2878,19 @@ function formatOutflowMoney(value) {
 
 function toMoney(value) {
   return Math.round(Number(String(value).replace(/,/g, "") || 0) * 100) / 100;
+}
+
+function sameMoney(left, right) {
+  return Math.abs(toMoney(left) - toMoney(right)) < 0.01;
+}
+
+function sameDate(left, right) {
+  return String(left || "") === String(right || "");
+}
+
+function meaningfulText(value) {
+  const text = String(value || "").trim();
+  return Boolean(text && text !== "-" && normalizeSearch(text) !== "unknown");
 }
 
 function normalize(value) {
