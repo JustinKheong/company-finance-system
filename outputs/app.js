@@ -1682,6 +1682,9 @@ function parseDocument(text, direction = "auto") {
 function applyTransactionRules(parsed, sourceText = "") {
   const haystack = normalizeSearch(`${sourceText} ${Object.values(parsed).join(" ")}`);
 
+  const pinduoduoInvoice = normalizePinduoduoInvoice(parsed, sourceText);
+  if (pinduoduoInvoice) return pinduoduoInvoice;
+
   if (parsed.type === "transaction_batch") {
     return {
       ...parsed,
@@ -1729,6 +1732,65 @@ function applyTransactionRules(parsed, sourceText = "") {
   }
 
   return parsed;
+}
+
+function normalizePinduoduoInvoice(parsed, sourceText = "") {
+  const text = `${sourceText} ${JSON.stringify(parsed)}`;
+  if (!isPinduoduoVoucher(text)) return null;
+
+  const date = parsed.date || findPinduoduoDate(text) || new Date().toISOString().slice(0, 10);
+  const invoiceNo = findPinduoduoOrderNo(text) || parsed.invoiceNo || parsed.reference || `PDD-${Date.now()}`;
+  const total = toMoney(parsed.total || parsed.amount || findPinduoduoPaidAmount(text));
+  const product = findPinduoduoProduct(text) || parsed.items?.[0]?.product || parsed.merchant || "拼多多商品";
+
+  return {
+    type: "supplier_invoice",
+    supplier: "拼多多",
+    invoiceNo,
+    date,
+    items: [
+      {
+        product,
+        qty: 1,
+        unitPrice: total,
+        total
+      }
+    ],
+    total,
+    paid: 0,
+    status: "Unpaid"
+  };
+}
+
+function isPinduoduoVoucher(text) {
+  const normalized = normalizeSearch(text);
+  return normalized.includes("拼多多")
+    || normalized.includes("pinduoduo")
+    || (normalized.includes("订单编号") && normalized.includes("实付"))
+    || (normalized.includes("快递单号") && normalized.includes("下单时间"));
+}
+
+function findPinduoduoOrderNo(text) {
+  return findPattern(text, /订单编号[：:\s]*([A-Z0-9-]{8,})/i).replace(/^订单编号[：:\s]*/i, "")
+    || findPattern(text, /\b\d{6,}-\d{8,}\b/);
+}
+
+function findPinduoduoPaidAmount(text) {
+  const paid = text.match(/实付[：:\s￥¥RM]*([\d,]+(?:\.\d{1,2})?)/i);
+  return paid ? toMoney(paid[1]) : findLargestAmount(text);
+}
+
+function findPinduoduoDate(text) {
+  const match = text.match(/(?:下单时间|拼单时间|发货时间)[：:\s]*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/);
+  return match ? findDate(match[1]) : findDate(text);
+}
+
+function findPinduoduoProduct(text) {
+  const lines = String(text).split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const productLine = lines.find((line) => /[a-zA-Z\u4e00-\u9fff]/.test(line)
+    && !/(拼多多|订单编号|支付方式|物流公司|快递单号|下单时间|拼单时间|发货时间|实付|确认收货|申请退款|联系商家|分享商品)/.test(line)
+    && line.length >= 6);
+  return productLine ? cleanValue(productLine).slice(0, 80) : "";
 }
 
 function applyIncomeRuleToTransaction(transaction) {
