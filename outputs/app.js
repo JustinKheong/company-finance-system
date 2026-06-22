@@ -1371,6 +1371,7 @@ function updateRepaymentMatchPanel() {
 function repaymentInvoiceOptions(autoLabel = "自动匹配；找不到就等待认领") {
   return [
     `<option value="__auto__">${escapeHtml(autoLabel)}</option>`,
+    `<option value="__claim__">等待认领（Invoice 还没上传）</option>`,
     ...getUnpaidInvoices().map((invoice) => {
       const remaining = invoiceRemaining(invoice);
       return `<option value="${escapeHtml(invoice.id)}">${escapeHtml(invoice.supplier)} - ${escapeHtml(invoice.invoiceNo)} - 剩余 ${formatRecordMoney(invoice, remaining)}</option>`;
@@ -2310,10 +2311,12 @@ function applyTransactionBatchDestinations(record) {
   record.transactions = record.transactions.map((transaction, index) => {
     const select = els.resultBox.querySelector(`[data-transaction-destination="${index}"]`);
     const invoiceSelect = els.resultBox.querySelector(`[data-transaction-invoice="${index}"]`);
+    const invoiceSelection = invoiceSelect?.value || "__claim__";
+    const destination = select?.value || transaction.direction || "income";
     return {
       ...transaction,
-      destination: select?.value || transaction.direction || "income",
-      matchedInvoiceId: invoiceSelect?.value && invoiceSelect.value !== "__auto__" ? invoiceSelect.value : null
+      destination: invoiceSelection === "__claim__" && ["repayment", "claim"].includes(destination) ? "claim" : destination,
+      matchedInvoiceId: invoiceSelection && !["__auto__", "__claim__"].includes(invoiceSelection) ? invoiceSelection : null
     };
   });
 }
@@ -2354,7 +2357,7 @@ function transactionToPayment(transaction) {
     reference: transaction.reference || "-",
     amount: toMoney(transaction.amount),
     matchedInvoiceId: invoice?.id || null,
-    waitingClaim: transaction.destination === "claim" || !invoice?.id
+    waitingClaim: transaction.destination === "claim"
   };
 }
 
@@ -2418,9 +2421,12 @@ function applyPayment(payment) {
   const stored = { ...payment, id: crypto.randomUUID() };
   const invoice = payment.matchedInvoiceId
     ? state.invoices.find((item) => item.id === payment.matchedInvoiceId)
-    : matchInvoice(payment);
+    : payment.waitingClaim
+      ? null
+      : matchInvoice(payment);
   if (invoice) {
     stored.matchedInvoiceId = invoice.id;
+    stored.waitingClaim = false;
     invoice.paid = toMoney((invoice.paid || 0) + stored.amount);
     invoice.status = invoice.paid + 0.01 >= invoice.total ? "Paid" : "Partial";
   }
