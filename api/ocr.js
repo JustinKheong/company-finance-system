@@ -83,9 +83,9 @@ function buildOpenAIRequest(direction, dataUrls) {
 function promptForDirection(direction) {
   if (direction === "income") return "Read this income proof, bank deposit screen, or transaction history. If multiple rows are visible, extract every row in transactions and return type transaction_batch. For each row return date, description, reference, amount, and direction income/expense/repayment. Use income for positive/credit/deposit rows and expense for debit/payment rows. Dates YYYY-MM-DD. JSON only.";
   if (direction === "repayment") return "Read this payment proof. Return recipient, date, reference, amount. Dates YYYY-MM-DD. JSON only.";
-  if (direction === "expense") return "Read this expense or bank/e-wallet transaction history. If multiple outgoing rows are visible, return every row in expenses. Use rightmost negative RM amounts as positive amounts. Dates YYYY-MM-DD. JSON only.";
+  if (direction === "expense") return "Read this expense or bank/e-wallet transaction history. If this is a Pinduoduo/拼多多 order detail screenshot, always return type supplier_invoice with supplier 拼多多, invoiceNo from 订单编号, date from 下单时间 or 拼单时间, item product name, qty 1, unitPrice/total from 实付. Otherwise, if multiple outgoing rows are visible, return every row in expenses. Use rightmost negative RM amounts as positive amounts. Dates YYYY-MM-DD. JSON only.";
   if (direction === "settlement") return "Read this settlement spreadsheet. Left side is Snackfactorie Enterprise goods, right side is Pasar Mini Zai Hin goods, bottom/right amount is owedAmount. Dates YYYY-MM-DD. JSON only.";
-  return "Read this supplier invoice. Return supplier, invoiceNo, date, items with product qty unitPrice total, and total. Dates YYYY-MM-DD. JSON only.";
+  return "Read this supplier invoice or online order detail. If it is a Pinduoduo/拼多多 order screenshot, supplier must be 拼多多, invoiceNo from 订单编号, date from 下单时间 or 拼单时间, item product from product title, qty 1 if no quantity is visible, unitPrice/total from 实付. Return supplier, invoiceNo, date, items with product qty unitPrice total, and total. Dates YYYY-MM-DD. JSON only.";
 }
 
 function schemaForDirection(direction) {
@@ -116,11 +116,23 @@ function schemaForDirection(direction) {
     rawText: nullableString()
   });
   if (direction === "expense") return objectSchema("expense_ocr", {
-    type: { type: "string", enum: ["personal_expenses"] },
+    type: { type: "string", enum: ["personal_expenses", "supplier_invoice"] },
     merchant: nullableString(),
+    supplier: nullableString(),
+    invoiceNo: nullableString(),
     date: nullableString(),
     category: nullableString(),
     amount: { type: "number" },
+    total: { type: "number" },
+    items: {
+      type: "array",
+      items: objectShape({
+        product: nullableString(),
+        qty: { type: "number" },
+        unitPrice: { type: "number" },
+        total: { type: "number" }
+      })
+    },
     expenses: {
       type: "array",
       items: objectShape({

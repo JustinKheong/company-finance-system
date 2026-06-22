@@ -233,6 +233,7 @@ function supplierInvoicePrompt() {
   return [
     "Read the uploaded supplier invoice image or images for a Malaysian small business finance system.",
     "If there are two images, treat them as parts/pages of the same order unless they clearly show unrelated documents.",
+    "If the image is a Pinduoduo/拼多多 online order screenshot, supplier must be 拼多多, invoiceNo from 订单编号, date from 下单时间 or 拼单时间, item product from the product title, qty 1 if no quantity is visible, and total from 实付.",
     "Return only the supplier invoice data.",
     "Extract supplier name, invoice number, invoice date, product line items, quantities, unit prices, line totals, and grand total.",
     "Dates must be YYYY-MM-DD. Amounts must be numbers without currency symbols.",
@@ -265,6 +266,7 @@ function repaymentPrompt() {
 function expensePrompt() {
   return [
     "Read the uploaded company/personal expense receipt, transaction history, or e-wallet/bank history image for a Malaysian small business finance system.",
+    "If the image is a Pinduoduo/拼多多 order detail screenshot, always return supplier_invoice. The supplier must be 拼多多, invoiceNo must come from 订单编号, date from 下单时间 or 拼单时间, item product from the product title, qty 1, and total from 实付.",
     "If the image shows multiple transactions, extract every visible outgoing expense row separately.",
     "For bank statement rows, use the transaction description/payee as merchant, the visible transaction date as date, and the rightmost red/negative RM amount as the expense amount.",
     "Return negative outgoing amounts as positive numbers without currency symbols.",
@@ -402,15 +404,32 @@ function expenseSchema() {
       type: "object",
       additionalProperties: false,
       properties: {
-        type: { type: "string", enum: ["personal_expenses"] },
+        type: { type: "string", enum: ["personal_expenses", "supplier_invoice"] },
         merchant: { type: ["string", "null"] },
+        supplier: { type: ["string", "null"] },
+        invoiceNo: { type: ["string", "null"] },
         date: { type: ["string", "null"] },
         category: { type: ["string", "null"] },
         amount: { type: "number" },
+        total: { type: "number" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              product: { type: ["string", "null"] },
+              qty: { type: "number" },
+              unitPrice: { type: "number" },
+              total: { type: "number" }
+            },
+            required: ["product", "qty", "unitPrice", "total"]
+          }
+        },
         expenses: { type: "array", items: expenseItemSchema },
         rawText: { type: ["string", "null"] }
       },
-      required: ["type", "merchant", "date", "category", "amount", "expenses", "rawText"]
+      required: ["type", "merchant", "supplier", "invoiceNo", "date", "category", "amount", "total", "items", "expenses", "rawText"]
     }
   };
 }
@@ -469,6 +488,26 @@ function normalizeOcrResult(parsed, direction, outputText) {
   }
 
   if (direction === "expense") {
+    if (parsed.type === "supplier_invoice") {
+      return {
+        type: "supplier_invoice",
+        supplier: parsed.supplier || "拼多多",
+        invoiceNo: parsed.invoiceNo || `PDD-${Date.now()}`,
+        date: parsed.date || new Date().toISOString().slice(0, 10),
+        items: Array.isArray(parsed.items)
+          ? parsed.items.map((item) => ({
+              product: item.product || "拼多多商品",
+              qty: Number(item.qty || 1),
+              unitPrice: Number(item.unitPrice || item.total || parsed.total || parsed.amount || 0),
+              total: Number(item.total || parsed.total || parsed.amount || 0)
+            }))
+          : [],
+        total: Number(parsed.total || parsed.amount || 0),
+        paid: 0,
+        status: "Unpaid",
+        rawText: parsed.rawText || outputText
+      };
+    }
     const expenses = Array.isArray(parsed.expenses)
       ? parsed.expenses.map(normalizeExpenseItem).filter((item) => item.amount > 0)
       : [];
