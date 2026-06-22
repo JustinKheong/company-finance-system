@@ -1373,7 +1373,7 @@ function repaymentInvoiceOptions(autoLabel = "自动匹配；找不到就等待�
     `<option value="__auto__">${escapeHtml(autoLabel)}</option>`,
     ...getUnpaidInvoices().map((invoice) => {
       const remaining = invoiceRemaining(invoice);
-      return `<option value="${escapeHtml(invoice.id)}">${escapeHtml(invoice.supplier)} - ${escapeHtml(invoice.invoiceNo)} - 剩余 ${formatMoney(remaining)}</option>`;
+      return `<option value="${escapeHtml(invoice.id)}">${escapeHtml(invoice.supplier)} - ${escapeHtml(invoice.invoiceNo)} - 剩余 ${formatRecordMoney(invoice, remaining)}</option>`;
     })
   ];
 }
@@ -1388,7 +1388,7 @@ function updateManualRepaymentSaveState() {
     els.resultBox.innerHTML = `
       <div class="notice-box success">
         <strong>可直接保存还账</strong>
-        <p>已选择 ${escapeHtml(invoice.supplier)} / ${escapeHtml(invoice.invoiceNo)}，保存后会记录 ${formatMoney(remaining)} 为还账金额。</p>
+        <p>已选择 ${escapeHtml(invoice.supplier)} / ${escapeHtml(invoice.invoiceNo)}，保存后会记录 ${formatRecordMoney(invoice, remaining)} 为还账金额。</p>
       </div>`;
     els.uploadStatus.textContent = "已选择还账对象。可以不用 OCR，直接按保存记录。";
     els.uploadStatus.className = "upload-status ready";
@@ -1448,8 +1448,8 @@ function openInvoiceDialog(invoice) {
       <tr>
         <td>${escapeHtml(item.product)}</td>
         <td>${item.qty}</td>
-        <td class="money">${formatMoney(item.unitPrice)}</td>
-        <td class="money">${formatMoney(item.total)}</td>
+        <td class="money">${formatRecordMoney(invoice, item.unitPrice)}</td>
+        <td class="money">${formatRecordMoney(invoice, item.total)}</td>
       </tr>`).join("")
     : `<tr><td colspan="4">暂无产品明细</td></tr>`;
 
@@ -1461,7 +1461,8 @@ function openInvoiceDialog(invoice) {
           <div class="summary-item"><span>Supplier</span><strong>${escapeHtml(invoice.supplier)}</strong></div>
           <div class="summary-item"><span>Invoice</span><strong>${escapeHtml(invoice.invoiceNo)}</strong></div>
           <div class="summary-item"><span>日期</span><strong>${invoice.date}</strong></div>
-          <div class="summary-item"><span>总金额</span><strong>${formatMoney(invoice.total)}</strong></div>
+          ${invoice.orderTime ? `<div class="summary-item"><span>下单时间</span><strong>${escapeHtml(invoice.orderTime)}</strong></div>` : ""}
+          <div class="summary-item"><span>总金额</span><strong>${formatRecordMoney(invoice, invoice.total)}</strong></div>
         </div>
         <div class="line-items">
           <h3>产品明细</h3>
@@ -1527,6 +1528,8 @@ function invoiceMetadataForSupabase(invoice) {
     supplier: invoice.supplier,
     invoiceNo: invoice.invoiceNo,
     date: invoice.date,
+    orderTime: invoice.orderTime || null,
+    currency: invoice.currency || "MYR",
     total: invoice.total,
     paid: invoice.paid,
     status: invoice.status,
@@ -1612,11 +1615,14 @@ function normalizeOcrPayload(payload) {
     supplier: payload.supplier || "Unknown Supplier",
     invoiceNo: payload.invoiceNo || `INV-${Date.now()}`,
     date: payload.date || new Date().toISOString().slice(0, 10),
+    orderTime: payload.orderTime || null,
+    currency: payload.currency || (/[￥¥]|人民币|元|CNY/i.test(payload.rawText || "") ? "CNY" : "MYR"),
     items: Array.isArray(payload.items) ? payload.items.map((item) => ({
       product: item.product || "Unknown Product",
       qty: Number(item.qty || 0),
       unitPrice: toMoney(item.unitPrice),
-      total: toMoney(item.total)
+      total: toMoney(item.total),
+      currency: payload.currency || (/[￥¥]|人民币|元|CNY/i.test(payload.rawText || "") ? "CNY" : "MYR")
     })) : [],
     total: toMoney(payload.total),
     paid: 0,
@@ -1738,22 +1744,27 @@ function normalizePinduoduoInvoice(parsed, sourceText = "") {
   const text = `${sourceText} ${JSON.stringify(parsed)}`;
   if (!isPinduoduoVoucher(text)) return null;
 
-  const date = parsed.date || findPinduoduoDate(text) || new Date().toISOString().slice(0, 10);
+  const orderTime = findPinduoduoOrderTime(text);
+  const date = parsed.date || orderTime?.slice(0, 10) || findPinduoduoDate(text) || new Date().toISOString().slice(0, 10);
   const invoiceNo = findPinduoduoOrderNo(text) || parsed.invoiceNo || parsed.reference || `PDD-${Date.now()}`;
   const total = toMoney(parsed.total || parsed.amount || findPinduoduoPaidAmount(text));
   const product = findPinduoduoProduct(text) || parsed.items?.[0]?.product || parsed.merchant || "拼多多商品";
+  const currency = findPinduoduoCurrency(text);
 
   return {
     type: "supplier_invoice",
     supplier: "拼多多",
     invoiceNo,
     date,
+    orderTime,
+    currency,
     items: [
       {
-        product,
+        product: renameProduct(product),
         qty: 1,
         unitPrice: total,
-        total
+        total,
+        currency
       }
     ],
     total,
@@ -1776,8 +1787,19 @@ function findPinduoduoOrderNo(text) {
 }
 
 function findPinduoduoPaidAmount(text) {
-  const paid = text.match(/实付[：:\s￥¥RM]*([\d,]+(?:\.\d{1,2})?)/i);
+  const paid = text.match(/实付[：:\s￥¥RM元CNY]*([\d,]+(?:\.\d{1,2})?)/i);
   return paid ? toMoney(paid[1]) : findLargestAmount(text);
+}
+
+function findPinduoduoCurrency(text) {
+  return /[￥¥]|人民币|元|CNY/i.test(text) ? "CNY" : "MYR";
+}
+
+function findPinduoduoOrderTime(text) {
+  const match = text.match(/(?:下单时间|拼单时间)[：:\s]*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})(?:\s+(\d{1,2}:\d{2}(?::\d{2})?))?/);
+  if (!match) return "";
+  const date = findDate(match[1]);
+  return match[2] ? `${date} ${match[2]}` : date;
 }
 
 function findPinduoduoDate(text) {
@@ -1841,6 +1863,9 @@ function groupInvoiceRows(invoices) {
     .map((group) => ({
       ...group,
       supplier: group.label,
+      currency: group.records.every((invoice) => (invoice.currency || "MYR") === (group.records[0].currency || "MYR"))
+        ? group.records[0].currency || "MYR"
+        : "MIXED",
       total: sumRecords(group.records, "total"),
       paid: sumRecords(group.records, "paid"),
       remaining: group.records.reduce((sum, invoice) => sum + invoiceRemaining(invoice), 0),
@@ -1901,8 +1926,8 @@ function renderInvoiceGroupRow(group) {
     <tr>
       <td>${escapeHtml(invoice.invoiceNo)}</td>
       <td>${escapeHtml(invoice.date)}</td>
-      <td class="money">${formatMoney(invoice.total)}</td>
-      <td class="money">${formatMoney(invoice.paid || 0)}</td>
+      <td class="money">${formatRecordMoney(invoice, invoice.total)}</td>
+      <td class="money">${formatRecordMoney(invoice, invoice.paid || 0)}</td>
       <td class="${invoice.status === "Paid" ? "paid" : "pending"}">${escapeHtml(invoice.status)}</td>
       <td><button class="detail-actions-btn" data-view-invoice="${escapeHtml(invoice.id)}" type="button">查看单据</button></td>
     </tr>`).join("");
@@ -1914,9 +1939,9 @@ function renderInvoiceGroupRow(group) {
             <strong>${escapeHtml(group.supplier)}</strong>
             <span>${group.count} 张</span>
             <span>日期：${escapeHtml(group.date)}</span>
-            <span>总额：${formatMoney(group.total)}</span>
-            <span>已付：${formatMoney(group.paid)}</span>
-            <span>未付：${formatMoney(group.remaining)}</span>
+            <span>总额：${formatRecordMoney(group, group.total)}</span>
+            <span>已付：${formatRecordMoney(group, group.paid)}</span>
+            <span>未付：${formatRecordMoney(group, group.remaining)}</span>
           </summary>
           <div class="nested-table-wrap">
             <table>
@@ -2413,6 +2438,14 @@ function invoiceRemaining(invoice) {
   return toMoney(Math.max((invoice.total || 0) - (invoice.paid || 0), 0));
 }
 
+function invoiceRemainingByCurrency(invoices) {
+  return invoices.reduce((totals, invoice) => {
+    const currency = invoice.currency || "MYR";
+    totals[currency] = toMoney((totals[currency] || 0) + invoiceRemaining(invoice));
+    return totals;
+  }, {});
+}
+
 function updateInventoryFromInvoice(invoice) {
   invoice.items.forEach((item) => {
     const key = inventoryKey(item.product);
@@ -2421,6 +2454,7 @@ function updateInventoryFromInvoice(invoice) {
       state.inventory[key] = {
         product: item.product,
         latestCost: item.unitPrice,
+        currency: invoice.currency || item.currency || "MYR",
         invoiceDate: invoice.date,
         supplier: invoice.supplier
       };
@@ -2536,12 +2570,13 @@ function render() {
   const monthInvoices = filterByMonth(state.invoices, "date");
   const monthExpenses = filterByMonth(state.expenses, "date");
   const monthPayments = filterByMonth(state.payments, "date");
-  const payable = monthInvoices.reduce((sum, invoice) => sum + Math.max(invoice.total - (invoice.paid || 0), 0), 0);
+  const payableByCurrency = invoiceRemainingByCurrency(monthInvoices);
+  const payable = payableByCurrency.MYR || 0;
   const companyExpenses = monthExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const spent = companyExpenses
     + monthPayments.reduce((sum, payment) => sum + payment.amount, 0);
   els.cashMetric.textContent = formatMoney(state.cashOnHand);
-  els.payableMetric.textContent = formatOutflowMoney(payable);
+  els.payableMetric.textContent = formatOutflowCurrencyTotals(payableByCurrency);
   els.spentMetric.textContent = formatOutflowMoney(spent);
   els.companyExpenseMetric.textContent = formatOutflowMoney(companyExpenses);
   els.availableMetric.textContent = formatMoney(state.cashOnHand - payable);
@@ -2650,7 +2685,7 @@ function renderTables() {
     return `
       <tr>
         <td>${escapeHtml(item.product)}</td>
-        <td class="money">${formatMoney(item.latestCost)}</td>
+        <td class="money">${formatRecordMoney(item, item.latestCost)}</td>
         <td>
           <div class="cost-calculator">
             <input data-calc-key="${escapeHtml(key)}" data-calc-field="total" type="number" min="0" step="0.01" placeholder="总价" value="${escapeHtml(calculator.total || "")}" />
@@ -2684,10 +2719,10 @@ function renderResult(parsed) {
   const fields = Object.entries(parsed)
     .filter(([key]) => !["items", "type", "id", "matchedInvoiceId", "receiptImage", "receiptImages"].includes(key))
     .filter(([key]) => !(key === "receiptFileName" && Array.isArray(parsed.receiptFileNames) && parsed.receiptFileNames.length))
-    .map(([key, value]) => `<div class="summary-item"><span>${fieldLabel(key)}</span><strong>${formatValue(key, value)}</strong></div>`)
+    .map(([key, value]) => `<div class="summary-item"><span>${fieldLabel(key)}</span><strong>${formatValue(key, value, parsed)}</strong></div>`)
     .join("");
   const items = parsed.items?.length
-    ? `<div class="line-items"><h3>产品明细</h3><div class="table-wrap"><table><thead><tr><th>产品</th><th>数量</th><th>单价</th><th>总额</th></tr></thead><tbody>${parsed.items.map((item) => `<tr><td>${escapeHtml(item.product)}</td><td>${item.qty}</td><td>${formatMoney(item.unitPrice)}</td><td>${formatMoney(item.total)}</td></tr>`).join("")}</tbody></table></div></div>`
+    ? `<div class="line-items"><h3>产品明细</h3><div class="table-wrap"><table><thead><tr><th>产品</th><th>数量</th><th>单价</th><th>总额</th></tr></thead><tbody>${parsed.items.map((item) => `<tr><td>${escapeHtml(item.product)}</td><td>${item.qty}</td><td>${formatRecordMoney(parsed, item.unitPrice)}</td><td>${formatRecordMoney(parsed, item.total)}</td></tr>`).join("")}</tbody></table></div></div>`
     : "";
   els.resultBox.innerHTML = `<div class="summary-grid">${fields}</div>${items}`;
 }
@@ -2909,6 +2944,8 @@ function fieldLabel(key) {
     supplier: "Supplier 名字",
     invoiceNo: "Invoice 编号",
     date: "日期",
+    orderTime: "下单时间",
+    currency: "币种",
     total: "总金额",
     paid: "已付款",
     status: "状态",
@@ -2923,8 +2960,8 @@ function fieldLabel(key) {
   })[key] || key;
 }
 
-function formatValue(key, value) {
-  if (["total", "paid", "amount"].includes(key)) return formatMoney(value);
+function formatValue(key, value, record = null) {
+  if (["total", "paid", "amount"].includes(key)) return formatRecordMoney(record, value);
   if (key === "receiptFileNames" && Array.isArray(value)) return escapeHtml(value.join(", "));
   return escapeHtml(String(value));
 }
@@ -2933,9 +2970,26 @@ function formatMoney(value) {
   return new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR" }).format(Number(value || 0));
 }
 
+function formatRecordMoney(record, value) {
+  const currency = record?.currency || "MYR";
+  if (currency === "CNY") {
+    return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" }).format(Number(value || 0));
+  }
+  return formatMoney(value);
+}
+
 function formatOutflowMoney(value) {
   const amount = Math.abs(Number(value || 0));
   return formatMoney(amount === 0 ? 0 : -amount);
+}
+
+function formatOutflowCurrencyTotals(totals) {
+  const entries = Object.entries(totals || {}).filter(([, value]) => Math.abs(Number(value || 0)) > 0.009);
+  if (!entries.length) return formatMoney(0);
+  return entries
+    .sort(([left], [right]) => (left === "MYR" ? -1 : right === "MYR" ? 1 : left.localeCompare(right)))
+    .map(([currency, value]) => formatRecordMoney({ currency }, -Math.abs(Number(value || 0))))
+    .join(" / ");
 }
 
 function toMoney(value) {
