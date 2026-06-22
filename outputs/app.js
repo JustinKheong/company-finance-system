@@ -1354,7 +1354,7 @@ function updateRepaymentMatchPanel() {
 
   const unpaidInvoices = getUnpaidInvoices();
   const matchedInvoiceId = pendingRecord?.matchedInvoiceId || "";
-  const autoLabel = matchedInvoiceId ? "自动匹配已找到，可改选其他 Invoice" : "自动匹配；找不到就等待匹配";
+  const autoLabel = matchedInvoiceId ? "自动匹配已找到，可改选其他 Invoice" : "自动匹配；找不到就等待认领";
   const options = repaymentInvoiceOptions(autoLabel);
 
   els.repaymentInvoiceSelect.innerHTML = options.join("");
@@ -1364,11 +1364,11 @@ function updateRepaymentMatchPanel() {
     : "__auto__";
   els.repaymentMatchStatus.textContent = unpaidInvoices.length
     ? "选择正确的公司或 Invoice 后，再按保存记录。"
-    : "目前没有未付款 Invoice；保存后会先记录为未匹配付款。";
+    : "目前没有未付款 Invoice；保存后会先放进等待认领。";
   updateManualRepaymentSaveState();
 }
 
-function repaymentInvoiceOptions(autoLabel = "自动匹配；找不到就等待匹配") {
+function repaymentInvoiceOptions(autoLabel = "自动匹配；找不到就等待认领") {
   return [
     `<option value="__auto__">${escapeHtml(autoLabel)}</option>`,
     ...getUnpaidInvoices().map((invoice) => {
@@ -2017,7 +2017,7 @@ function renderPaymentRow({ payment, invoice }) {
     <td>${escapeHtml(payment.recipient)}</td>
     <td>${escapeHtml(payment.reference)}</td>
     <td class="money">${formatMoney(payment.amount)}</td>
-    <td class="${invoice ? "paid" : "unmatched"}">${invoice ? escapeHtml(invoice.invoiceNo) : "等待匹配"}</td>
+    <td class="${invoice ? "paid" : "unmatched"}">${invoice ? escapeHtml(invoice.invoiceNo) : "等待认领"}</td>
   </tr>`;
 }
 
@@ -2184,7 +2184,7 @@ function duplicateTransactionBatch(record) {
   if (!transactions.length) return null;
   const allDuplicate = transactions.every((transaction) => {
     if (transaction.destination === "expense") return duplicateExpense(transactionToExpense(transaction));
-    if (transaction.destination === "repayment") return duplicatePayment(transactionToPayment(transaction));
+    if (transaction.destination === "repayment" || transaction.destination === "claim") return duplicatePayment(transactionToPayment(transaction));
     return duplicateIncome(transactionToIncome(transaction));
   });
   return allDuplicate ? duplicateNotice("多笔交易", `${transactions.length} 笔明细都已经保存过`) : null;
@@ -2212,6 +2212,7 @@ function recordParsedDocument(parsed) {
   if (parsed.type === "settlement_statement") {
     const invoice = settlementToInvoice(parsed);
     state.invoices.push(invoice);
+    claimPendingPaymentsForInvoice(invoice);
     return;
   }
   if (parsed.type === "income") {
@@ -2223,6 +2224,7 @@ function recordParsedDocument(parsed) {
     const invoice = applyRenameRulesToInvoice({ ...parsed, id: crypto.randomUUID() });
     state.invoices.push(invoice);
     updateInventoryFromInvoice(invoice);
+    claimPendingPaymentsForInvoice(invoice);
   }
   if (parsed.type === "personal_expenses") {
     state.expenses.push({ ...parsed, id: crypto.randomUUID() });
@@ -2234,6 +2236,7 @@ function recordParsedDocument(parsed) {
         const invoice = expenseToMaterialInvoice(expense);
         state.invoices.push(invoice);
         updateInventoryFromInvoice(invoice);
+        claimPendingPaymentsForInvoice(invoice);
       } else if (expense.destination === "touchngo") {
         state.walletTransfers.push({
           date: expense.date,
@@ -2252,7 +2255,7 @@ function recordParsedDocument(parsed) {
     parsed.transactions.forEach((transaction) => {
       if (transaction.destination === "expense") {
         state.expenses.push(transactionToExpense(transaction));
-      } else if (transaction.destination === "repayment") {
+      } else if (transaction.destination === "repayment" || transaction.destination === "claim") {
         applyPayment(transactionToPayment(transaction));
       } else {
         const income = transactionToIncome(transaction);
@@ -2350,7 +2353,8 @@ function transactionToPayment(transaction) {
     date: transaction.date || new Date().toISOString().slice(0, 10),
     reference: transaction.reference || "-",
     amount: toMoney(transaction.amount),
-    matchedInvoiceId: invoice?.id || null
+    matchedInvoiceId: invoice?.id || null,
+    waitingClaim: transaction.destination === "claim" || !invoice?.id
   };
 }
 
@@ -2421,6 +2425,30 @@ function applyPayment(payment) {
     invoice.status = invoice.paid + 0.01 >= invoice.total ? "Paid" : "Partial";
   }
   state.payments.push(stored);
+}
+
+function claimPendingPaymentsForInvoice(invoice) {
+  state.payments
+    .filter((payment) => !payment.matchedInvoiceId)
+    .forEach((payment) => {
+      if (!paymentClaimsInvoice(payment, invoice)) return;
+      const remaining = invoiceRemaining(invoice);
+      if (remaining <= 0.01) return;
+      payment.matchedInvoiceId = invoice.id;
+      payment.waitingClaim = false;
+      payment.claimedAt = new Date().toISOString();
+      const appliedAmount = Math.min(payment.amount || 0, remaining);
+      invoice.paid = toMoney((invoice.paid || 0) + appliedAmount);
+      invoice.status = invoice.paid + 0.01 >= invoice.total ? "Paid" : "Partial";
+    });
+}
+
+function paymentClaimsInvoice(payment, invoice) {
+  const recipient = normalize(payment.recipient);
+  const supplier = normalize(invoice.supplier);
+  const textMatch = recipient && supplier && (recipient.includes(supplier) || supplier.includes(recipient));
+  const amountMatch = Math.abs(invoiceRemaining(invoice) - Number(payment.amount || 0)) < 0.02;
+  return textMatch || amountMatch;
 }
 
 function matchInvoice(payment) {
@@ -2740,11 +2768,12 @@ function renderTransactionBatchResult(parsed) {
             <option value="income" ${transaction.direction === "income" ? "selected" : ""}>进账</option>
             <option value="expense" ${transaction.direction === "expense" ? "selected" : ""}>个人支出</option>
             <option value="repayment" ${transaction.direction === "repayment" ? "selected" : ""}>还账</option>
+            <option value="claim" ${transaction.direction === "claim" ? "selected" : ""}>等待认领</option>
           </select>
         </td>
         <td>
           <select class="destination-select" data-transaction-invoice="${index}">
-            ${repaymentInvoiceOptions("自动匹配")}
+            ${repaymentInvoiceOptions("自动匹配；没有发票就等待认领")}
           </select>
         </td>
       </tr>`).join("")
