@@ -1145,6 +1145,8 @@ async function savePendingRecord() {
   }
   lastSaveSnapshot = structuredClone(state);
   recordParsedDocument(record);
+  const savedMonth = monthFromRecord(record);
+  if (savedMonth) selectedMonth = savedMonth;
   render();
   setSaveButtonsBusy(true);
   els.uploadStatus.textContent = "正在保存到 Supabase...";
@@ -1172,6 +1174,7 @@ async function savePendingRecord() {
     <div class="notice-box success">
       <strong>记录已保存到 Supabase</strong>
       <p>${typeLabel(record.type)} 已经进入下面的记录表。其他设备用同一个 Email 登录后刷新就会看到。</p>
+      <p>页面已切换到 ${escapeHtml(selectedMonth)}，方便你看到刚保存的记录。</p>
     </div>`;
   els.uploadStatus.textContent = "记录已保存到 Supabase。";
   els.uploadStatus.className = "upload-status ready";
@@ -3123,6 +3126,17 @@ function dateRangeLabel(records) {
 
 function filterByMonth(records, dateKey) {
   return records.filter((record) => monthFromDate(record?.[dateKey]) === selectedMonth);
+}
+
+function monthFromRecord(record) {
+  if (!record) return "";
+  if (record.type === "transaction_batch") {
+    return monthFromDate(record.transactions?.[0]?.date || record.date);
+  }
+  if (record.type === "personal_expenses_batch") {
+    return monthFromDate(record.expenses?.[0]?.date || record.date);
+  }
+  return monthFromDate(record.date);
 }
 
 function monthFromDate(value) {
