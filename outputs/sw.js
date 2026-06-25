@@ -1,4 +1,4 @@
-const CACHE_NAME = "finance-pwa-v10";
+const CACHE_NAME = "finance-pwa-v11";
 const APP_SHELL = [
   "/",
   "/app.js",

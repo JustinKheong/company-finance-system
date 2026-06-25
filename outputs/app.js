@@ -2589,16 +2589,32 @@ function invoiceRemainingByCurrency(invoices) {
 
 function updateInventoryFromInvoice(invoice) {
   invoice.items.forEach((item) => {
-    const key = inventoryKey(item.product);
+    const key = inventoryKey(`${item.product}__${invoice.supplier || "Unknown Supplier"}`);
     const existing = state.inventory[key];
+    const historyEntry = {
+      date: invoice.date,
+      invoiceNo: invoice.invoiceNo,
+      supplier: invoice.supplier || "Unknown Supplier",
+      qty: Number(item.qty || 0),
+      unitPrice: toMoney(item.unitPrice),
+      total: toMoney(item.total),
+      currency: invoice.currency || item.currency || "MYR"
+    };
+    const history = [
+      ...(existing?.history || []),
+      historyEntry
+    ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
     if (!existing || new Date(invoice.date) >= new Date(existing.invoiceDate)) {
       state.inventory[key] = {
         product: item.product,
         latestCost: item.unitPrice,
         currency: invoice.currency || item.currency || "MYR",
         invoiceDate: invoice.date,
-        supplier: invoice.supplier
+        supplier: invoice.supplier,
+        history
       };
+    } else {
+      existing.history = history;
     }
   });
 }
@@ -2619,7 +2635,7 @@ function handleCostCalculatorInput(event) {
 function updateCostCalculatorResult(key) {
   const row = document.querySelector(`[data-calc-result="${cssEscape(key)}"]`);
   if (!row) return;
-  row.textContent = formatMoney(calculateCostResult(state.costCalculators[key]));
+  row.textContent = formatRecordMoney(state.inventory[key], calculateCostResult(state.costCalculators[key]));
 }
 
 function calculateCostResult(calculator) {
@@ -2832,7 +2848,7 @@ function renderTables() {
   const inventoryItems = Object.entries(state.inventory);
   const inventoryQuery = normalizeSearch(els.inventorySearch.value);
   const filteredInventory = inventoryQuery
-    ? inventoryItems.filter(([, item]) => normalizeSearch(`${item.product} ${item.supplier}`).includes(inventoryQuery))
+    ? inventoryItems.filter(([, item]) => normalizeSearch(`${item.product} ${item.supplier} ${inventoryHistorySearchText(item)}`).includes(inventoryQuery))
     : inventoryItems;
 
   els.inventorySearchStatus.textContent = inventoryQuery
@@ -2843,20 +2859,48 @@ function renderTables() {
     const calculator = state.costCalculators[key] || { total: "", divisor: "" };
     return `
       <tr>
-        <td>${escapeHtml(item.product)}</td>
+        <td>${renderInventoryProductCell(item)}</td>
         <td class="money">${formatRecordMoney(item, item.latestCost)}</td>
         <td>
           <div class="cost-calculator">
             <input data-calc-key="${escapeHtml(key)}" data-calc-field="total" type="number" min="0" step="0.01" placeholder="总价" value="${escapeHtml(calculator.total || "")}" />
             <span>÷</span>
             <input data-calc-key="${escapeHtml(key)}" data-calc-field="divisor" type="number" min="1" step="1" placeholder="数量" value="${escapeHtml(calculator.divisor || "")}" />
-            <strong data-calc-result="${escapeHtml(key)}">${formatMoney(calculateCostResult(calculator))}</strong>
+            <strong data-calc-result="${escapeHtml(key)}">${formatRecordMoney(item, calculateCostResult(calculator))}</strong>
           </div>
         </td>
         <td>${item.invoiceDate}</td>
         <td>${escapeHtml(item.supplier)}</td>
       </tr>`;
   }), 5);
+}
+
+function renderInventoryProductCell(item) {
+  const history = Array.isArray(item.history) ? item.history : [];
+  if (!history.length) return escapeHtml(item.product);
+  const rows = history.map((entry) => `
+    <tr>
+      <td>${escapeHtml(entry.date || "-")}</td>
+      <td>${escapeHtml(entry.invoiceNo || "-")}</td>
+      <td>${escapeHtml(entry.supplier || item.supplier || "-")}</td>
+      <td>${Number(entry.qty || 0)}</td>
+      <td class="money">${formatRecordMoney(entry, entry.unitPrice)}</td>
+      <td class="money">${formatRecordMoney(entry, entry.total)}</td>
+    </tr>`).join("");
+  return `
+    <details class="inventory-history">
+      <summary>${escapeHtml(item.product)}</summary>
+      <div class="nested-table-wrap">
+        <table>
+          <thead><tr><th>来货日期</th><th>Invoice</th><th>Supplier</th><th>数量</th><th>当时成本</th><th>金额</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </details>`;
+}
+
+function inventoryHistorySearchText(item) {
+  return (item.history || []).map((entry) => `${entry.date || ""} ${entry.invoiceNo || ""} ${entry.supplier || ""}`).join(" ");
 }
 
 function renderResult(parsed) {
