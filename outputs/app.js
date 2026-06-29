@@ -3,6 +3,7 @@ const AUTH_STORAGE_KEY = "finance-system-auth-session-v1";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const RECEIPT_PREVIEW_MAX_WIDTH = 900;
 const RECEIPT_PREVIEW_QUALITY = 0.68;
+const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 const samples = {
   invoice: `Invoice INV-1005
@@ -342,6 +343,9 @@ async function saveStateToSupabase() {
 
 async function ensureSupabaseConfig() {
   if (supabaseConfig) return supabaseConfig;
+  if (IS_FILE_PROTOCOL) {
+    throw new Error("本地文件模式不能登录。请用 http://localhost:4173/ 或 https://company-finance-system.vercel.app/ 打开系统。");
+  }
   const response = await fetch("/api/supabase-config");
   supabaseConfig = await readJsonResponse(response, "/api/supabase-config");
   if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
@@ -366,6 +370,10 @@ async function authRequest(path, body) {
 }
 
 async function signInWithEmail() {
+  if (IS_FILE_PROTOCOL) {
+    setAuthWarning("现在是 file:// 本地文件模式，不能连接登录 API。请先运行 npm start，然后打开 http://localhost:4173/；或直接打开线上网站。");
+    return;
+  }
   const credentials = authCredentials();
   if (!credentials) return;
   setAuthBusy(true);
@@ -381,6 +389,10 @@ async function signInWithEmail() {
 }
 
 async function signUpWithEmail() {
+  if (IS_FILE_PROTOCOL) {
+    setAuthWarning("现在是 file:// 本地文件模式，不能注册账号。请先运行 npm start，然后打开 http://localhost:4173/；或直接打开线上网站。");
+    return;
+  }
   const credentials = authCredentials();
   if (!credentials) return;
   setAuthBusy(true);
@@ -3270,6 +3282,13 @@ async function initializeApp() {
   reapplyExpenseRules();
   render();
   updateAuthUi();
+  if (IS_FILE_PROTOCOL) {
+    const message = "现在是 file:// 本地文件模式，不能登录或读取 Supabase。请运行 npm start 后打开 http://localhost:4173/，或直接打开线上网站。";
+    setAuthWarning(message);
+    els.uploadStatus.textContent = message;
+    els.uploadStatus.className = "upload-status warning";
+    return;
+  }
   await restorePersistedAuthSession();
   await loadStateFromSupabase();
   refreshConfigStatus();
