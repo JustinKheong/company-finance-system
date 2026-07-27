@@ -132,6 +132,7 @@ const els = {
   authPasswordInput: document.querySelector("#authPasswordInput"),
   loginBtn: document.querySelector("#loginBtn"),
   signupBtn: document.querySelector("#signupBtn"),
+  resendConfirmBtn: document.querySelector("#resendConfirmBtn"),
   logoutBtn: document.querySelector("#logoutBtn"),
   rememberLoginInput: document.querySelector("#rememberLoginInput"),
   authStatus: document.querySelector("#authStatus")
@@ -139,6 +140,7 @@ const els = {
 
 els.loginBtn.addEventListener("click", signInWithEmail);
 els.signupBtn.addEventListener("click", signUpWithEmail);
+els.resendConfirmBtn.addEventListener("click", resendConfirmationEmail);
 els.logoutBtn.addEventListener("click", signOut);
 document.querySelector("#analyzeBtn").addEventListener("click", analyzeCurrentDocument);
 els.saveRecordBtn.addEventListener("click", savePendingRecord);
@@ -411,6 +413,30 @@ async function signUpWithEmail() {
   }
 }
 
+async function resendConfirmationEmail() {
+  if (IS_FILE_PROTOCOL) {
+    setAuthWarning("现在是 file:// 本地文件模式，不能重发确认 Email。请用 https://company-finance-system.vercel.app/ 打开系统。");
+    return;
+  }
+  const email = authEmailOnly();
+  if (!email) return;
+  setAuthBusy(true);
+  try {
+    await authRequest("/resend", {
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo: window.location.origin
+      }
+    });
+    setAuthReady("确认 Email 已重新发送。请去信箱点击确认链接，然后回来登录。");
+  } catch (error) {
+    setAuthWarning(`重发失败：${error.message || "请检查 Email 或 Supabase Auth 设置。"}`);
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
 function signOut() {
   authSession = null;
   clearPersistedAuthSession();
@@ -436,6 +462,15 @@ function authCredentials() {
   return { email, password };
 }
 
+function authEmailOnly() {
+  const email = els.authEmailInput.value.trim();
+  if (!email) {
+    setAuthWarning("请先填写 Email。");
+    return "";
+  }
+  return email;
+}
+
 function setAuthSession(payload, options = {}) {
   authSession = normalizeAuthSession(payload);
   els.authPasswordInput.value = "";
@@ -449,6 +484,7 @@ function updateAuthUi() {
   document.body.classList.toggle("is-authenticated", loggedIn);
   els.loginBtn.hidden = loggedIn;
   els.signupBtn.hidden = loggedIn;
+  els.resendConfirmBtn.hidden = loggedIn;
   els.logoutBtn.hidden = !loggedIn;
   els.authEmailInput.disabled = loggedIn;
   els.authPasswordInput.hidden = loggedIn;
@@ -463,6 +499,7 @@ function updateAuthUi() {
 function setAuthBusy(isBusy) {
   els.loginBtn.disabled = isBusy;
   els.signupBtn.disabled = isBusy;
+  els.resendConfirmBtn.disabled = isBusy;
   els.logoutBtn.disabled = isBusy;
 }
 
@@ -483,7 +520,7 @@ function loginErrorMessage(error) {
     return "登录失败：Email 或 Password 不正确。如果还没有账号，请先按“注册”。如果刚注册，请先去 Email 信箱确认账号。";
   }
   if (normalized.includes("email not confirmed")) {
-    return "登录失败：这个 Email 还没确认。请去信箱点击 Supabase confirmation link 后再登录。";
+    return "登录失败：这个 Email 还没确认。请去信箱点击确认链接；如果没收到，请按“重发确认 Email”。";
   }
   return message || "登录失败，请检查 Email 和 Password。";
 }
