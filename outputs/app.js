@@ -30,7 +30,8 @@ Amount RM 580.00`
 };
 
 const defaultState = {
-  cashOnHand: 15000,
+  cashOnHand: 0,
+  balanceMode: "opening_balance",
   incomes: [],
   invoices: [],
   expenses: [],
@@ -238,7 +239,7 @@ function normalizeState(value) {
       amount: expense.amount
     }));
 
-  return {
+  const normalized = {
     ...structuredClone(defaultState),
     ...value,
     incomes: Array.isArray(value?.incomes) ? value.incomes : [],
@@ -252,6 +253,11 @@ function normalizeState(value) {
     costCalculators: value?.costCalculators || {},
     inventory: value?.inventory || {}
   };
+  if (value && value.balanceMode !== "opening_balance") {
+    normalized.cashOnHand = toMoney((Number(value.cashOnHand) || 0) - ledgerDeltaThroughMonth(normalized, currentMonth()));
+    normalized.balanceMode = "opening_balance";
+  }
+  return normalized;
 }
 
 function isTouchNgoTransferExpense(expense) {
@@ -358,16 +364,15 @@ async function ensureSupabaseConfig() {
 
 async function authRequest(path, body) {
   await ensureSupabaseConfig();
-  const response = await fetch(`${supabaseConfig.url}/auth/v1${path}`, {
+  const response = await fetch("/api/supabase-auth", {
     method: "POST",
     headers: {
-      apikey: supabaseConfig.anonKey,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify({ path, body })
   });
   const payload = await readJsonResponse(response, `Supabase Auth ${path}`);
-  if (!response.ok) throw new Error(payload.error_description || payload.msg || payload.message || "Supabase Auth 请求失败。");
+  if (!response.ok) throw new Error(payload.error_description || payload.msg || payload.message || payload.error || "Supabase Auth 请求失败。");
   return payload;
 }
 
@@ -995,7 +1000,7 @@ function uploadReadyMessage() {
   if (selectedDirection === "repayment") return "已选择还账。识别后请按保存记录，才会记录付款并匹配未付款 Invoice。";
   if (selectedDirection === "expense") return "已选择个人支出。识别后请按保存记录，才会进入个人支出并更新分类百分比。";
   if (selectedDirection === "settlement") return "已选择对账 PDF。识别后可生成双方拿货和欠款金额的 PDF。";
-  return "已选择进账。识别后请按保存记录，才会加入进账记录并增加账上余额。";
+  return "已选择进账。识别后请按保存记录，才会加入进账记录并更新滚动余额。";
 }
 
 function seedDemoData() {
@@ -2378,7 +2383,6 @@ function recordParsedDocument(parsed) {
   if (parsed.type === "income") {
     const income = applyIncomeRuleToIncome({ ...parsed, id: crypto.randomUUID() });
     state.incomes.push(income);
-    state.cashOnHand = toMoney(state.cashOnHand + income.amount);
   }
   if (parsed.type === "supplier_invoice") {
     const invoice = applyRenameRulesToInvoice({ ...parsed, id: crypto.randomUUID() });
@@ -2420,7 +2424,6 @@ function recordParsedDocument(parsed) {
       } else {
         const income = transactionToIncome(transaction);
         state.incomes.push(income);
-        state.cashOnHand = toMoney(state.cashOnHand + income.amount);
       }
     });
   }
@@ -2784,13 +2787,43 @@ function render() {
   const companyExpenses = monthExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const spent = companyExpenses
     + monthPayments.reduce((sum, payment) => sum + payment.amount, 0);
-  els.cashMetric.textContent = formatMoney(state.cashOnHand);
+  const ledgerBalance = balanceThroughMonth(selectedMonth);
+  els.cashMetric.textContent = formatMoney(ledgerBalance);
   els.payableMetric.textContent = formatOutflowCurrencyTotals(payableByCurrency);
   els.spentMetric.textContent = formatOutflowMoney(spent);
   els.companyExpenseMetric.textContent = formatOutflowMoney(companyExpenses);
-  els.availableMetric.textContent = formatMoney(state.cashOnHand - payable);
+  els.availableMetric.textContent = formatMoney(ledgerBalance - payable);
   renderTables();
   updateRepaymentMatchPanel();
+}
+
+function balanceThroughMonth(month) {
+  return toMoney((Number(state.cashOnHand) || 0) + ledgerDeltaThroughMonth(state, month));
+}
+
+function ledgerDeltaThroughMonth(sourceState, month) {
+  return ledgerIncomeThroughMonth(sourceState, month)
+    - ledgerExpensesThroughMonth(sourceState, month)
+    - ledgerPaymentsThroughMonth(sourceState, month);
+}
+
+function ledgerIncomeThroughMonth(sourceState, month) {
+  return recordsThroughMonth(sourceState.incomes || [], month)
+    .reduce((sum, income) => sum + (Number(income.amount) || 0), 0);
+}
+
+function ledgerExpensesThroughMonth(sourceState, month) {
+  return recordsThroughMonth(sourceState.expenses || [], month)
+    .reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+}
+
+function ledgerPaymentsThroughMonth(sourceState, month) {
+  return recordsThroughMonth(sourceState.payments || [], month)
+    .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+}
+
+function recordsThroughMonth(records, month) {
+  return records.filter((record) => monthFromDate(record?.date) <= month);
 }
 
 function renderTables() {

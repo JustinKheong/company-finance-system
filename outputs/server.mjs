@@ -56,6 +56,11 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/api/supabase-auth") {
+      await handleSupabaseAuthProxy(req, res);
+      return;
+    }
+
     if (req.method === "GET" || req.method === "HEAD") {
       await serveStatic(req, res);
       return;
@@ -110,6 +115,47 @@ async function handleSupabaseRestProxy(req, res) {
     "Cache-Control": "no-store"
   });
   res.end(text);
+}
+
+async function handleSupabaseAuthProxy(req, res) {
+  const body = await readRequestBody(req, 1024 * 1024);
+  let payload;
+  try {
+    payload = JSON.parse(body.toString("utf8") || "{}");
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON." });
+    return;
+  }
+
+  const path = String(payload.path || "");
+  if (!["/token?grant_type=password", "/token?grant_type=refresh_token", "/signup", "/resend"].includes(path)) {
+    sendJson(res, 400, { error: "Invalid Supabase Auth path." });
+    return;
+  }
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    sendJson(res, 500, { error: "SUPABASE_URL or SUPABASE_ANON_KEY is not set." });
+    return;
+  }
+
+  const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1${path}`, {
+    method: "POST",
+    headers: {
+      apikey: process.env.SUPABASE_ANON_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload.body || {})
+  });
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "application/json; charset=utf-8";
+  if (contentType.includes("application/json")) {
+    res.writeHead(response.status, {
+      "Content-Type": contentType,
+      "Cache-Control": "no-store"
+    });
+    res.end(text || "{}");
+    return;
+  }
+  sendJson(res, response.status, { error: text || "Supabase Auth returned a non-JSON response." });
 }
 
 async function handleOcr(req, res) {
