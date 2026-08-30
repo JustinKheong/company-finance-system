@@ -369,7 +369,7 @@ async function ensureSupabaseConfig() {
   if (IS_FILE_PROTOCOL) {
     throw new Error("本地文件模式不能登录。请用 http://localhost:4173/ 或 https://company-finance-system.vercel.app/ 打开系统。");
   }
-  const response = await fetch("/api/supabase-config");
+  const response = await fetchWithRetry("/api/supabase-config", {}, "/api/supabase-config");
   supabaseConfig = await readJsonResponse(response, "/api/supabase-config");
   if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
     throw new Error("/api/supabase-config 没有回传 SUPABASE_URL 或 SUPABASE_ANON_KEY。请检查 .env 和 Vercel 环境变量。");
@@ -379,13 +379,13 @@ async function ensureSupabaseConfig() {
 
 async function authRequest(path, body) {
   await ensureSupabaseConfig();
-  const response = await fetch("/api/supabase-auth", {
+  const response = await fetchWithRetry("/api/supabase-auth", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ path, body })
-  });
+  }, `Supabase Auth ${path}`);
   const payload = await readJsonResponse(response, `Supabase Auth ${path}`);
   if (!response.ok) throw new Error(payload.error_description || payload.msg || payload.message || payload.error || "Supabase Auth 请求失败。");
   return payload;
@@ -621,6 +621,9 @@ function activateDefaultTabForArea() {
 function loginErrorMessage(error) {
   const message = String(error?.message || "");
   const normalized = message.toLowerCase();
+  if (normalized.includes("load failed") || normalized.includes("failed to fetch") || normalized.includes("networkerror") || normalized.includes("连接失败")) {
+    return "登录失败：浏览器连接不到线上登录 API。请先刷新页面；如果是手机 App/PWA，请完全关掉后重新打开，或用 Safari/Chrome 直接打开 https://company-finance-system.vercel.app/ 再试。";
+  }
   if (normalized.includes("invalid login credentials")) {
     return "登录失败：Email 或 Password 不正确。如果还没有账号，请先按“注册”。如果刚注册，请先去 Email 信箱确认账号。";
   }
