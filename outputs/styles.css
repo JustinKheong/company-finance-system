@@ -222,6 +222,61 @@ h2 { font-size: 20px; }
 .metric.company-expense { background: #e8ecff; }
 .metric.available { background: var(--blue-soft); }
 
+.last-records {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  margin-bottom: 18px;
+  padding: 18px;
+}
+
+.last-record-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.last-record-card {
+  appearance: none;
+  background: #f8fbfa;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: grid;
+  gap: 7px;
+  min-height: 150px;
+  padding: 14px;
+  text-align: left;
+}
+
+.last-record-card:hover {
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 12px 28px rgba(17, 24, 39, 0.08);
+}
+
+.last-record-card span,
+.last-record-card small {
+  color: rgba(20, 32, 29, 0.66);
+  font-weight: 800;
+}
+
+.last-record-card strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.last-record-card em {
+  font-style: normal;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.last-record-card.empty {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns: minmax(330px, 0.9fr) minmax(420px, 1.1fr);
@@ -832,6 +887,16 @@ tbody tr:last-child td { border-bottom: 0; }
 
 @media (max-width: 980px) {
   .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .last-record-grid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scroll-snap-type: x mandatory;
+  }
+  .last-record-card {
+    flex: 0 0 min(78vw, 320px);
+    scroll-snap-align: start;
+  }
   .workspace-grid { grid-template-columns: 1fr; }
   .settlement-grid { grid-template-columns: 1fr; }
 }

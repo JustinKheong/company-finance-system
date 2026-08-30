@@ -79,6 +79,7 @@ const els = {
   spentMetric: document.querySelector("#spentMetric"),
   companyExpenseMetric: document.querySelector("#companyExpenseMetric"),
   availableMetric: document.querySelector("#availableMetric"),
+  lastRecordCards: document.querySelector("#lastRecordCards"),
   fileInput: document.querySelector("#fileInput"),
   fileLabel: document.querySelector("#fileLabel"),
   imagePreview: document.querySelector("#imagePreview"),
@@ -174,6 +175,7 @@ els.expenseRuleRows.addEventListener("click", handleRuleTableClick);
 els.invoiceRows.addEventListener("click", handleInvoiceRowClick);
 els.pendingPaymentRows.addEventListener("click", handlePendingPaymentAction);
 els.closeInvoiceDialogBtn.addEventListener("click", () => els.invoiceDialog.close());
+els.lastRecordCards.addEventListener("click", handleLastRecordClick);
 document.querySelectorAll(".area-button").forEach((button) => {
   button.addEventListener("click", () => setActiveArea(button.dataset.area));
 });
@@ -848,6 +850,7 @@ function invoiceFromRow(row) {
     items: row.items || [],
     receiptImages: row.receipt_images || [],
     receiptFileNames: row.receipt_file_names || [],
+    createdAt: row.metadata?.createdAt || row.created_at || null,
     settlementStatement: row.settlement_statement || row.metadata?.settlementStatement
   };
 }
@@ -867,6 +870,7 @@ function paymentFromReviewRow(row) {
     reference: payment.reference || row.invoice_no || "-",
     amount: toMoney(payment.amount || row.total),
     matchedInvoiceId: null,
+    createdAt: payment.createdAt || row.created_at || null,
     waitingClaim: true,
     ownerReviewRequired: true,
     reviewStatus: payment.reviewStatus || "pending_owner_review",
@@ -1862,6 +1866,7 @@ function invoiceMetadataForSupabase(invoice) {
     invoiceNo: invoice.invoiceNo,
     date: invoice.date,
     orderTime: invoice.orderTime || null,
+    createdAt: invoice.createdAt || null,
     currency: invoice.currency || "MYR",
     total: invoice.total,
     paid: invoice.paid,
@@ -2607,30 +2612,31 @@ function duplicateNotice(section, detail) {
 }
 
 function recordParsedDocument(parsed) {
+  const createdAt = parsed.createdAt || new Date().toISOString();
   if (parsed.type === "settlement_statement") {
-    const invoice = settlementToInvoice(parsed);
+    const invoice = { ...settlementToInvoice(parsed), createdAt };
     state.invoices.push(invoice);
     claimPendingPaymentsForInvoice(invoice);
     return;
   }
   if (parsed.type === "income") {
-    const income = applyIncomeRuleToIncome({ ...parsed, id: crypto.randomUUID() });
+    const income = applyIncomeRuleToIncome({ ...parsed, id: crypto.randomUUID(), createdAt });
     state.incomes.push(income);
   }
   if (parsed.type === "supplier_invoice") {
-    const invoice = applyRenameRulesToInvoice({ ...parsed, id: crypto.randomUUID() });
+    const invoice = applyRenameRulesToInvoice({ ...parsed, id: crypto.randomUUID(), createdAt });
     state.invoices.push(invoice);
     updateInventoryFromInvoice(invoice);
     claimPendingPaymentsForInvoice(invoice);
   }
   if (parsed.type === "personal_expenses") {
-    state.expenses.push({ ...parsed, id: crypto.randomUUID() });
+    state.expenses.push({ ...parsed, id: crypto.randomUUID(), createdAt });
   }
   if (parsed.type === "personal_expenses_batch") {
     applyExpenseBatchDestinations(parsed);
     parsed.expenses.forEach((expense) => {
       if (expense.destination === "materials") {
-        const invoice = expenseToMaterialInvoice(expense);
+        const invoice = { ...expenseToMaterialInvoice(expense), createdAt };
         state.invoices.push(invoice);
         updateInventoryFromInvoice(invoice);
         claimPendingPaymentsForInvoice(invoice);
@@ -2640,10 +2646,11 @@ function recordParsedDocument(parsed) {
           payee: expense.merchant || "Touch 'n Go",
           reference: expense.note || "Bank to Touch 'n Go",
           amount: expense.amount,
-          id: crypto.randomUUID()
+          id: crypto.randomUUID(),
+          createdAt
         });
       } else {
-        state.expenses.push({ ...expense, id: crypto.randomUUID() });
+        state.expenses.push({ ...expense, id: crypto.randomUUID(), createdAt });
       }
     });
   }
@@ -2651,17 +2658,17 @@ function recordParsedDocument(parsed) {
     applyTransactionBatchDestinations(parsed);
     parsed.transactions.forEach((transaction) => {
       if (transaction.destination === "expense") {
-        state.expenses.push(transactionToExpense(transaction));
+        state.expenses.push({ ...transactionToExpense(transaction), createdAt });
       } else if (transaction.destination === "repayment" || transaction.destination === "claim") {
-        applyPayment(transactionToPayment(transaction));
+        applyPayment({ ...transactionToPayment(transaction), createdAt });
       } else {
         const income = transactionToIncome(transaction);
-        state.incomes.push(income);
+        state.incomes.push({ ...income, createdAt });
       }
     });
   }
   if (parsed.type === "payment_proof") {
-    applyPayment(parsed);
+    applyPayment({ ...parsed, createdAt });
   }
 }
 
@@ -3026,8 +3033,130 @@ function render() {
   els.spentMetric.textContent = formatOutflowMoney(spent);
   els.companyExpenseMetric.textContent = formatOutflowMoney(companyExpenses);
   els.availableMetric.textContent = formatMoney(ledgerBalance - payable);
+  renderLastRecords();
   renderTables();
   updateRepaymentMatchPanel();
+}
+
+function renderLastRecords() {
+  if (!els.lastRecordCards) return;
+  const cards = [
+    lastRecordCard("最后进账记录", "incomes", latestRecord(state.incomes || [], "date"), {
+      amountKey: "amount",
+      party: (record) => record.payer || "Unknown Payer"
+    }),
+    lastRecordCard("最后个人支出", "expenses", latestRecord(state.expenses || [], "date"), {
+      amountKey: "amount",
+      party: (record) => record.merchant || record.category || "Unknown Merchant",
+      outflow: true
+    }),
+    lastRecordCard("最后还账记录", "payments", latestRecord(state.payments || [], "date"), {
+      amountKey: "amount",
+      party: (record) => record.recipient || "Unknown Recipient",
+      outflow: true
+    }),
+    lastRecordCard("最后Supplier Invoice", "invoices", latestRecord(state.invoices || [], "date"), {
+      amountKey: "total",
+      party: (record) => record.supplier || "Unknown Supplier",
+      outflow: true
+    })
+  ];
+  els.lastRecordCards.innerHTML = cards.join("");
+}
+
+function lastRecordCard(title, tab, record, options) {
+  if (!record) {
+    return `
+      <button class="last-record-card empty" type="button" disabled>
+        <span>${escapeHtml(title)}</span>
+        <strong>暂无记录</strong>
+      </button>`;
+  }
+  const transactionDate = record.date || "-";
+  const createdAt = record.createdAt || record.created_at || null;
+  const amount = options.outflow
+    ? formatOutflowMoney(record[options.amountKey])
+    : formatRecordMoney(record, record[options.amountKey]);
+  return `
+    <button class="last-record-card" type="button" data-last-record-tab="${escapeHtml(tab)}" data-last-record-id="${escapeHtml(record.id || "")}">
+      <span>${escapeHtml(title)}</span>
+      <strong>${amount}</strong>
+      <em>${escapeHtml(options.party(record))}</em>
+      <small>交易日期：${escapeHtml(formatDisplayDate(transactionDate))}</small>
+      <small>录入时间：${escapeHtml(formatCreatedAt(createdAt))}</small>
+      <small>${escapeHtml(relativeDayLabel(transactionDate))}</small>
+    </button>`;
+}
+
+function latestRecord(records, dateKey) {
+  return [...records].filter(Boolean).sort((a, b) => {
+    const createdDiff = dateValue(b.createdAt || b.created_at) - dateValue(a.createdAt || a.created_at);
+    if (createdDiff) return createdDiff;
+    return dateValue(b[dateKey]) - dateValue(a[dateKey]);
+  })[0] || null;
+}
+
+function handleLastRecordClick(event) {
+  const card = event.target.closest("[data-last-record-tab]");
+  if (!card) return;
+  const tab = card.dataset.lastRecordTab;
+  const id = card.dataset.lastRecordId;
+  const record = recordForLastCard(tab, id);
+  if (record?.date) {
+    selectedMonth = monthFromDate(record.date);
+    render();
+  }
+  activateTab(tab);
+  document.querySelector(`#${tab}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (tab === "invoices" && record) openInvoiceDialog(record);
+}
+
+function recordForLastCard(tab, id) {
+  const sources = {
+    incomes: state.incomes,
+    expenses: state.expenses,
+    payments: state.payments,
+    invoices: state.invoices
+  };
+  return (sources[tab] || []).find((record) => record.id === id) || null;
+}
+
+function dateValue(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function formatDisplayDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString("zh-MY", { year: "numeric", month: "2-digit", day: "2-digit" });
+}
+
+function formatCreatedAt(value) {
+  if (!value) return "暂无录入时间";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("zh-MY", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function relativeDayLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "日期未知";
+  const today = new Date();
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const diffDays = Math.round((startToday - startDate) / 86400000);
+  if (diffDays === 0) return "今天";
+  if (diffDays === 1) return "昨天";
+  if (diffDays > 1) return `${diffDays}天前`;
+  return `${Math.abs(diffDays)}天后`;
 }
 
 function balanceThroughMonth(month) {
