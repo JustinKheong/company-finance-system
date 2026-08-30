@@ -32,6 +32,19 @@ export default async function handler(req, res) {
       return;
     }
 
+    const tableName = path.split("?")[0].split("/").filter(Boolean)[0] || "";
+    const allowedTables = new Set(["profiles", "suppliers", "invoices", "inventory", "app_state"]);
+    if (!allowedTables.has(tableName)) {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.status(403).json({ error: "This Supabase table is not exposed by the app API." });
+      return;
+    }
+    if (tableName === "profiles" && method !== "GET") {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.status(403).json({ error: "Profiles are read-only from the app API in Phase 1." });
+      return;
+    }
+
     const supabaseUrl = process.env.SUPABASE_URL;
     const anonKey = process.env.SUPABASE_ANON_KEY;
     if (!supabaseUrl || !anonKey) {

@@ -65,6 +65,8 @@ let lastSaveSnapshot = null;
 let settlementDraft = null;
 let supabaseConfig = null;
 let authSession = null;
+let userProfile = null;
+let activeArea = "head-office";
 let canSaveApiKey = true;
 let lastSupabaseSaveError = "";
 let selectedMonth = currentMonth();
@@ -136,7 +138,8 @@ const els = {
   resendConfirmBtn: document.querySelector("#resendConfirmBtn"),
   logoutBtn: document.querySelector("#logoutBtn"),
   rememberLoginInput: document.querySelector("#rememberLoginInput"),
-  authStatus: document.querySelector("#authStatus")
+  authStatus: document.querySelector("#authStatus"),
+  roleStatus: document.querySelector("#roleStatus")
 };
 
 els.loginBtn.addEventListener("click", signInWithEmail);
@@ -171,6 +174,9 @@ els.expenseRuleRows.addEventListener("click", handleRuleTableClick);
 els.invoiceRows.addEventListener("click", handleInvoiceRowClick);
 els.pendingPaymentRows.addEventListener("click", handlePendingPaymentAction);
 els.closeInvoiceDialogBtn.addEventListener("click", () => els.invoiceDialog.close());
+document.querySelectorAll(".area-button").forEach((button) => {
+  button.addEventListener("click", () => setActiveArea(button.dataset.area));
+});
 
 document.querySelectorAll(".segment-button").forEach((button) => {
   button.addEventListener("click", () => {
@@ -300,8 +306,11 @@ async function loadStateFromSupabase() {
       return;
     }
 
+    const appStateRequest = canAccessHeadOffice()
+      ? supabaseRequest(`/app_state?id=eq.${encodeURIComponent(appStateId())}&select=data`)
+      : Promise.resolve([]);
     const [appRows, invoiceRows, inventoryRows] = await Promise.all([
-      supabaseRequest(`/app_state?id=eq.${encodeURIComponent(appStateId())}&select=data`),
+      appStateRequest,
       supabaseRequest("/invoices?select=*"),
       supabaseRequest("/inventory?select=*")
     ]);
@@ -336,10 +345,16 @@ async function saveStateToSupabase() {
       els.uploadStatus.className = "upload-status warning";
       return false;
     }
-    await replaceSupabaseTable("suppliers", supplierRowsFromState());
-    await replaceSupabaseTable("invoices", state.invoices.map(invoiceToRow));
-    await replaceSupabaseTable("inventory", inventoryRowsFromState());
-    await upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })]);
+    if (canAccessHeadOffice()) {
+      await replaceSupabaseTable("suppliers", supplierRowsFromState());
+      await replaceSupabaseTable("invoices", state.invoices.map(invoiceToRow));
+      await replaceSupabaseTable("inventory", inventoryRowsFromState());
+      await upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })]);
+    } else {
+      await upsertSupabaseRows("suppliers", supplierRowsFromState());
+      await upsertSupabaseRows("invoices", state.invoices.map(invoiceToRow));
+      await upsertSupabaseRows("inventory", inventoryRowsFromState());
+    }
     return true;
   } catch (error) {
     lastSupabaseSaveError = error.message || "未知 Supabase 保存错误。";
@@ -387,6 +402,7 @@ async function signInWithEmail() {
   try {
     const payload = await authRequest("/token?grant_type=password", credentials);
     setAuthSession(payload, { persist: els.rememberLoginInput.checked });
+    await loadUserProfile();
     await loadStateFromSupabase();
   } catch (error) {
     setAuthWarning(loginErrorMessage(error));
@@ -407,6 +423,7 @@ async function signUpWithEmail() {
     const payload = await authRequest("/signup", credentials);
     if (payload.access_token) {
       setAuthSession(payload, { persist: els.rememberLoginInput.checked });
+      await loadUserProfile();
       await loadStateFromSupabase();
     } else {
       setAuthReady("注册成功。请去 Email 信箱确认账号，然后回到这里登录。");
@@ -444,6 +461,8 @@ async function resendConfirmationEmail() {
 
 function signOut() {
   authSession = null;
+  userProfile = null;
+  activeArea = "head-office";
   clearPersistedAuthSession();
   state = normalizeState(structuredClone(defaultState));
   clearPendingRecord();
@@ -499,6 +518,7 @@ function updateAuthUi() {
   } else {
     setAuthWarning("请先登录以载入数据库资料。");
   }
+  updateRoleUi();
 }
 
 function setAuthBusy(isBusy) {
@@ -516,6 +536,86 @@ function setAuthReady(message) {
 function setAuthWarning(message) {
   els.authStatus.textContent = message;
   els.authStatus.className = "warning";
+}
+
+async function loadUserProfile() {
+  if (!authSession?.user?.id) {
+    userProfile = null;
+    updateRoleUi();
+    return null;
+  }
+  try {
+    const rows = await supabaseRequest(`/profiles?id=eq.${encodeURIComponent(authSession.user.id)}&select=id,owner_id,email,role,full_name`);
+    userProfile = rows?.[0] || fallbackOwnerProfile();
+  } catch (error) {
+    userProfile = fallbackOwnerProfile();
+    setAuthWarning(`权限资料读取失败，暂时以 owner 模式继续。请确认已执行 Phase 1 migration。${error.message || ""}`);
+  }
+  if (!canAccessHeadOffice()) activeArea = "company-pos";
+  if (canAccessHeadOffice() && activeArea !== "company-pos") activeArea = "head-office";
+  updateRoleUi();
+  activateDefaultTabForArea();
+  return userProfile;
+}
+
+function fallbackOwnerProfile() {
+  return {
+    id: authSession?.user?.id,
+    owner_id: authSession?.user?.id,
+    email: authSession?.user?.email || els.authEmailInput.value.trim(),
+    role: "owner"
+  };
+}
+
+function profileRole() {
+  return userProfile?.role === "staff" ? "staff" : "owner";
+}
+
+function canAccessHeadOffice() {
+  return profileRole() === "owner";
+}
+
+function dataOwnerId() {
+  return userProfile?.owner_id || userProfile?.id || authSession?.user?.id || "anonymous";
+}
+
+function setActiveArea(area) {
+  activeArea = area === "head-office" && canAccessHeadOffice() ? "head-office" : "company-pos";
+  updateRoleUi();
+  activateDefaultTabForArea();
+}
+
+function updateRoleUi() {
+  const loggedIn = Boolean(authSession?.access_token);
+  const role = loggedIn ? profileRole() : "";
+  if (els.roleStatus) {
+    els.roleStatus.textContent = loggedIn
+      ? `权限：${role === "owner" ? "Owner，可进入 Head Office 和 Company POS" : "Staff，只能进入 Company POS"}`
+      : "等待权限资料。";
+    els.roleStatus.className = loggedIn ? "role-status ready" : "role-status";
+  }
+  document.body.classList.toggle("is-owner", loggedIn && role === "owner");
+  document.body.classList.toggle("is-staff", loggedIn && role === "staff");
+  document.body.classList.toggle("area-head-office", loggedIn && activeArea === "head-office" && role === "owner");
+  document.body.classList.toggle("area-company-pos", loggedIn && (activeArea === "company-pos" || role === "staff"));
+  document.querySelectorAll(".area-button").forEach((button) => {
+    const isHeadOffice = button.dataset.area === "head-office";
+    button.hidden = loggedIn && isHeadOffice && role === "staff";
+    button.classList.toggle("active", loggedIn && (
+      (button.dataset.area === "company-pos" && (activeArea === "company-pos" || role === "staff"))
+      || (button.dataset.area === "head-office" && activeArea === "head-office" && role === "owner")
+    ));
+  });
+}
+
+function activateDefaultTabForArea() {
+  const activeTab = document.querySelector(".tab-button.active")?.dataset.tab || "";
+  if ((activeArea === "company-pos" || !canAccessHeadOffice()) && !["invoices", "inventory"].includes(activeTab)) {
+    activateTab("invoices");
+  }
+  if (activeArea === "head-office" && canAccessHeadOffice() && !["incomes", "expenses", "payments", "rules"].includes(activeTab)) {
+    activateTab("incomes");
+  }
 }
 
 function loginErrorMessage(error) {
@@ -590,6 +690,7 @@ async function restorePersistedAuthSession() {
   if (savedSession?.access_token && Date.now() < savedSession.expires_at_ms - 60_000) {
     setAuthSession(savedSession);
     els.rememberLoginInput.checked = true;
+    await loadUserProfile();
     return true;
   }
 
@@ -605,6 +706,7 @@ async function restorePersistedAuthSession() {
     });
     setAuthSession(refreshed, { persist: true });
     els.rememberLoginInput.checked = true;
+    await loadUserProfile();
     return true;
   } catch {
     clearPersistedAuthSession();
@@ -784,7 +886,7 @@ function unscopedRecordId(value) {
 }
 
 function currentUserPrefix() {
-  return authSession?.user?.id || "anonymous";
+  return dataOwnerId();
 }
 
 function appStateId() {
@@ -794,7 +896,7 @@ function appStateId() {
 function withUserId(row) {
   return {
     ...row,
-    user_id: authSession?.user?.id
+    user_id: dataOwnerId()
   };
 }
 

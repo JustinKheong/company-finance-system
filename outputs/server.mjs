@@ -95,6 +95,16 @@ async function handleSupabaseRestProxy(req, res) {
     sendJson(res, 405, { error: "Invalid Supabase method." });
     return;
   }
+  const tableName = path.split("?")[0].split("/").filter(Boolean)[0] || "";
+  const allowedTables = new Set(["profiles", "suppliers", "invoices", "inventory", "app_state"]);
+  if (!allowedTables.has(tableName)) {
+    sendJson(res, 403, { error: "This Supabase table is not exposed by the app API." });
+    return;
+  }
+  if (tableName === "profiles" && method !== "GET") {
+    sendJson(res, 403, { error: "Profiles are read-only from the app API in Phase 1." });
+    return;
+  }
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
     sendJson(res, 500, { error: "SUPABASE_URL or SUPABASE_ANON_KEY is not set." });
     return;

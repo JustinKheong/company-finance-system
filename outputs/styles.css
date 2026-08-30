@@ -33,6 +33,12 @@ body:not(.is-authenticated) .protected-content {
   display: none !important;
 }
 
+body.is-authenticated.area-head-office .company-pos-only,
+body.is-authenticated.area-company-pos .head-office-only,
+body.is-authenticated.is-staff .head-office-only {
+  display: none !important;
+}
+
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: 0.68; }
@@ -123,6 +129,35 @@ h2 { font-size: 20px; }
 
 .auth-panel p.ready { color: var(--green); }
 .auth-panel p.warning { color: var(--coral); }
+.auth-panel p.role-status { color: var(--muted); }
+.auth-panel p.role-status.ready { color: var(--blue); }
+
+.area-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow);
+}
+
+.area-button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 16px;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 900;
+}
+
+.area-button.active {
+  color: #fff;
+  background: var(--green);
+}
 
 .balance-control, .month-control {
   display: grid;

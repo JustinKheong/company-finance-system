@@ -37,25 +37,31 @@
               <button id="logoutBtn" class="secondary-btn" type="button" hidden>退出</button>
             </div>
             <p id="authStatus">请先登录以载入数据库资料。</p>
+            <p id="roleStatus" class="role-status">等待权限资料。</p>
           </div>
-          <label class="month-control protected-content">
+          <label class="month-control protected-content head-office-only">
             <span>查看月份</span>
             <input id="monthInput" type="month" />
           </label>
-          <label class="balance-control protected-content">
+          <label class="balance-control protected-content head-office-only">
             <span>期初余额</span>
             <input id="cashInput" type="number" step="0.01" />
           </label>
-          <button id="exportBtn" class="icon-btn protected-content" type="button" aria-label="导出 JSON" title="导出 JSON">
+          <button id="exportBtn" class="icon-btn protected-content head-office-only" type="button" aria-label="导出 JSON" title="导出 JSON">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" /></svg>
           </button>
-          <button id="resetBtn" class="icon-btn ghost protected-content" type="button" aria-label="重置数据" title="重置数据">
+          <button id="resetBtn" class="icon-btn ghost protected-content head-office-only" type="button" aria-label="重置数据" title="重置数据">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v6h6" /></svg>
           </button>
         </div>
       </header>
 
-      <section class="dashboard-grid protected-content" aria-label="Dashboard">
+      <nav class="area-switcher protected-content" aria-label="系统区域">
+        <button class="area-button active" data-area="head-office" type="button">Head Office</button>
+        <button class="area-button" data-area="company-pos" type="button">Company POS</button>
+      </nav>
+
+      <section class="dashboard-grid protected-content head-office-only" aria-label="Dashboard">
         <article class="metric cash">
           <span>账上的钱</span>
           <strong id="cashMetric">RM 0.00</strong>
@@ -78,7 +84,7 @@
         </article>
       </section>
 
-      <section class="workspace-grid protected-content">
+      <section class="workspace-grid protected-content company-pos-only">
         <article class="upload-panel">
           <div class="section-head">
             <div>
@@ -95,7 +101,7 @@
           </label>
           <p id="uploadStatus" class="upload-status">上传后请选择进账、出账或还账；识别完成后再按保存记录。</p>
 
-          <div class="api-key-panel">
+          <div class="api-key-panel head-office-only">
             <label class="api-key-field">
               <span>OpenAI API Key</span>
               <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off" />
@@ -167,15 +173,15 @@
 
       <section class="tabs protected-content" aria-label="记录">
         <div class="tab-list" role="tablist">
-          <button class="tab-button active" data-tab="invoices" type="button">待付款 Invoice</button>
-          <button class="tab-button" data-tab="incomes" type="button">进账记录</button>
-          <button class="tab-button" data-tab="expenses" type="button">个人支出</button>
-          <button class="tab-button" data-tab="payments" type="button">付款证明</button>
-          <button class="tab-button" data-tab="inventory" type="button">Inventory</button>
-          <button class="tab-button" data-tab="rules" type="button">规则设定</button>
+          <button class="tab-button company-pos-only active" data-tab="invoices" type="button">Supplier Invoice</button>
+          <button class="tab-button head-office-only" data-tab="incomes" type="button">进账记录</button>
+          <button class="tab-button head-office-only" data-tab="expenses" type="button">个人支出</button>
+          <button class="tab-button head-office-only" data-tab="payments" type="button">付款证明</button>
+          <button class="tab-button company-pos-only" data-tab="inventory" type="button">Inventory</button>
+          <button class="tab-button head-office-only" data-tab="rules" type="button">规则设定</button>
         </div>
 
-        <div id="invoices" class="tab-panel active">
+        <div id="invoices" class="tab-panel company-pos-only active">
           <div class="table-wrap">
             <table>
               <thead><tr><th>Supplier</th><th>Invoice</th><th>日期</th><th>金额</th><th>已付</th><th>状态</th><th>单据</th></tr></thead>
@@ -183,7 +189,7 @@
             </table>
           </div>
         </div>
-        <div id="incomes" class="tab-panel">
+        <div id="incomes" class="tab-panel head-office-only">
           <section class="rules-section">
             <div class="rules-head">
               <h3>进账命名规则</h3>
@@ -214,7 +220,7 @@
             </table>
           </div>
         </div>
-        <div id="expenses" class="tab-panel">
+        <div id="expenses" class="tab-panel head-office-only">
           <section class="rules-section">
             <div class="rules-head">
               <h3>个人支出分类规则</h3>
@@ -273,7 +279,7 @@
             </div>
           </section>
         </div>
-        <div id="payments" class="tab-panel">
+        <div id="payments" class="tab-panel head-office-only">
           <section class="rules-section">
             <div class="rules-head">
               <h3>等待认领</h3>
@@ -299,7 +305,7 @@
             </div>
           </section>
         </div>
-        <div id="inventory" class="tab-panel">
+        <div id="inventory" class="tab-panel company-pos-only">
           <div class="rename-rules">
             <div class="rules-head">
               <div>
@@ -339,7 +345,7 @@
             </table>
           </div>
         </div>
-        <div id="rules" class="tab-panel">
+        <div id="rules" class="tab-panel head-office-only">
           <section class="rules-section">
             <div class="rules-head">
               <h3>出账分类规则</h3>
