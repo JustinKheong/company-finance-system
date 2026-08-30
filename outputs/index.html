@@ -61,7 +61,15 @@
         <button class="area-button" data-area="company-pos" type="button">Company POS</button>
       </nav>
 
-      <section class="dashboard-grid protected-content head-office-only" aria-label="Dashboard">
+      <nav class="head-office-nav protected-content head-office-only" aria-label="Head Office 导航">
+        <button class="head-office-nav-button active" data-head-office-page="dashboard" type="button">Dashboard</button>
+        <button class="head-office-nav-button" data-head-office-page="transactions" type="button">Transactions</button>
+        <button class="head-office-nav-button" data-head-office-page="pricing" type="button">Pricing</button>
+        <button class="head-office-nav-button" data-head-office-page="integrations" type="button">Integrations</button>
+        <button class="head-office-nav-button" data-head-office-page="users" type="button">Users</button>
+      </nav>
+
+      <section class="dashboard-grid protected-content head-office-only head-office-page" data-head-office-content="dashboard" aria-label="Dashboard">
         <article class="metric cash">
           <span>账上的钱</span>
           <strong id="cashMetric">RM 0.00</strong>
@@ -84,7 +92,7 @@
         </article>
       </section>
 
-      <section class="last-records protected-content head-office-only" aria-label="最后记录">
+      <section class="last-records protected-content head-office-only head-office-page" data-head-office-content="dashboard" aria-label="最后记录">
         <div class="section-head">
           <div>
             <p class="eyebrow">Latest Activity</p>
@@ -94,7 +102,58 @@
         <div id="lastRecordCards" class="last-record-grid"></div>
       </section>
 
-      <section class="workspace-grid protected-content">
+      <section class="integrations-panel protected-content head-office-only head-office-page" data-head-office-content="integrations" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Integrations</p>
+            <h2>连接状态</h2>
+          </div>
+        </div>
+        <div class="integration-grid">
+          <article class="integration-card">
+            <div><h3>Loyverse</h3><p>将在 Loyverse API 阶段启用。</p></div>
+            <span class="integration-status">Not Connected</span>
+          </article>
+          <article class="integration-card">
+            <div><h3>WooCommerce</h3><p>价格同步会在独立确认步骤启用。</p></div>
+            <span class="integration-status">Not Connected</span>
+          </article>
+          <article class="integration-card">
+            <div><h3>BigSeller</h3><p>等待 API 权限批准后才会接入。</p></div>
+            <span class="integration-status pending">Pending API Approval</span>
+          </article>
+          <article class="integration-card">
+            <div><h3>Bank</h3><p>目前使用手动上传，支持图片、PDF 和 CSV。</p></div>
+            <span class="integration-status manual">Manual Upload</span>
+          </article>
+          <article class="integration-card">
+            <div><h3>Touch 'n Go</h3><p>目前使用手动上传，支持图片、PDF 和 CSV。</p></div>
+            <span class="integration-status manual">Manual Upload</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="placeholder-panel protected-content head-office-only head-office-page" data-head-office-content="pricing" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Pricing</p>
+            <h2>价格同步</h2>
+          </div>
+        </div>
+        <p>Markup 和 WooCommerce / BigSeller 价格同步会在后续阶段启用。本阶段不会连接真实 API，也不会修改销售价格。</p>
+      </section>
+
+      <section class="placeholder-panel protected-content head-office-only head-office-page" data-head-office-content="users" hidden>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Users</p>
+            <h2>员工管理</h2>
+          </div>
+        </div>
+        <p>员工管理会继续使用 Supabase Auth 和 profiles 权限。本阶段只保留 owner 专用入口，不在前端输入任何 Secret。</p>
+      </section>
+
+      <section class="workspace-grid protected-content head-office-page" data-head-office-content="transactions">
         <article class="upload-panel">
           <div class="section-head">
             <div>
@@ -109,14 +168,10 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3" /></svg>
             <span id="fileLabel">选择 1-2 张 Invoice、收据、转账截图或现金支出照片</span>
           </label>
-          <p id="uploadStatus" class="upload-status">上传后请选择进账、出账或还账；识别完成后再按保存记录。</p>
+          <p id="uploadStatus" class="upload-status">上传后请选择凭证类型；识别完成后再按保存记录。</p>
 
-          <div class="api-key-panel head-office-only">
-            <label class="api-key-field">
-              <span>OpenAI API Key</span>
-              <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off" />
-            </label>
-            <button id="saveApiKeyBtn" class="secondary-btn" type="button">保存 Key</button>
+          <div class="ocr-status-panel">
+            <span>OCR状态</span>
             <p id="apiKeyStatus">正在检查 OCR 设置...</p>
           </div>
 
@@ -183,7 +238,7 @@
         </article>
       </section>
 
-      <section class="tabs protected-content" aria-label="记录">
+      <section class="tabs protected-content head-office-page" data-head-office-content="transactions" aria-label="记录">
         <div class="tab-list" role="tablist">
           <button class="tab-button active" data-tab="invoices" type="button">Supplier Invoice</button>
           <button class="tab-button head-office-only" data-tab="incomes" type="button">进账记录</button>

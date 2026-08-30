@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,14 +33,17 @@ createServer(async (req, res) => {
       sendJson(res, 200, {
         hasApiKey: hasUsableApiKey(),
         model,
-        canSaveApiKey: true,
+        canSaveApiKey: false,
         runtime: "local"
       });
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/config") {
-      await handleSaveConfig(req, res);
+      sendJson(res, 400, {
+        error: "OpenAI API Key must be configured through environment variables, not saved from the browser.",
+        canSaveApiKey: false
+      });
       return;
     }
 
@@ -249,37 +252,6 @@ async function handleOcr(req, res) {
   const outputText = collectOutputText(payload);
   const parsed = parseModelJson(outputText);
   sendJson(res, 200, normalizeOcrResult(parsed, direction, outputText));
-}
-
-async function handleSaveConfig(req, res) {
-  const body = await readRequestBody(req, 64 * 1024);
-  let payload;
-  try {
-    payload = JSON.parse(body.toString("utf8"));
-  } catch {
-    sendJson(res, 400, { error: "Invalid JSON." });
-    return;
-  }
-
-  const apiKey = String(payload.apiKey || "").trim();
-  const requestedModel = String(payload.model || model || "gpt-5.5").trim();
-
-  if (!apiKey.startsWith("sk-")) {
-    sendJson(res, 400, { error: "API key should start with sk-." });
-    return;
-  }
-
-  const envText = [
-    `OPENAI_API_KEY=${apiKey}`,
-    `OPENAI_MODEL=${requestedModel}`,
-    `PORT=${port}`,
-    ""
-  ].join("\n");
-
-  await writeFile(join(rootDir, "openai-config.env"), envText, "utf8");
-  process.env.OPENAI_API_KEY = apiKey;
-  process.env.OPENAI_MODEL = requestedModel;
-  sendJson(res, 200, { ok: true, hasApiKey: true, model: requestedModel });
 }
 
 function buildOpenAIRequest(direction, dataUrls) {
@@ -810,7 +782,6 @@ function sendText(res, status, text) {
 
 async function loadEnvFile() {
   await loadOneEnvFile(".env", false);
-  await loadOneEnvFile("openai-config.env", true);
 }
 
 async function loadOneEnvFile(filename, override) {

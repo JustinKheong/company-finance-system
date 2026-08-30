@@ -67,7 +67,7 @@ let supabaseConfig = null;
 let authSession = null;
 let userProfile = null;
 let activeArea = "head-office";
-let canSaveApiKey = true;
+let activeHeadOfficePage = "dashboard";
 let lastSupabaseSaveError = "";
 let selectedMonth = currentMonth();
 
@@ -85,9 +85,7 @@ const els = {
   imagePreview: document.querySelector("#imagePreview"),
   emptyPreview: document.querySelector("#emptyPreview"),
   uploadStatus: document.querySelector("#uploadStatus"),
-  apiKeyInput: document.querySelector("#apiKeyInput"),
   apiKeyStatus: document.querySelector("#apiKeyStatus"),
-  saveApiKeyBtn: document.querySelector("#saveApiKeyBtn"),
   saveRecordBtn: document.querySelector("#saveRecordBtn"),
   undoSaveBtn: document.querySelector("#undoSaveBtn"),
   saveRecordReviewBtn: document.querySelector("#saveRecordReviewBtn"),
@@ -157,7 +155,6 @@ els.repaymentInvoiceSelect.addEventListener("change", handleRepaymentInvoiceSele
 els.repaymentInvoiceSelect.addEventListener("change", updateManualRepaymentSaveState);
 document.querySelector("#exportBtn").addEventListener("click", exportData);
 document.querySelector("#resetBtn").addEventListener("click", resetData);
-els.saveApiKeyBtn.addEventListener("click", saveApiKey);
 els.inventorySearch.addEventListener("input", renderTables);
 els.inventoryRows.addEventListener("input", handleCostCalculatorInput);
 els.ruleMatchInput.addEventListener("input", renderTables);
@@ -178,6 +175,9 @@ els.closeInvoiceDialogBtn.addEventListener("click", () => els.invoiceDialog.clos
 els.lastRecordCards.addEventListener("click", handleLastRecordClick);
 document.querySelectorAll(".area-button").forEach((button) => {
   button.addEventListener("click", () => setActiveArea(button.dataset.area));
+});
+document.querySelectorAll(".head-office-nav-button").forEach((button) => {
+  button.addEventListener("click", () => setHeadOfficePage(button.dataset.headOfficePage));
 });
 
 document.querySelectorAll(".segment-button").forEach((button) => {
@@ -587,9 +587,19 @@ function dataOwnerId() {
 
 function setActiveArea(area) {
   activeArea = area === "head-office" && canAccessHeadOffice() ? "head-office" : "company-pos";
+  if (activeArea === "head-office") activeHeadOfficePage = "dashboard";
   setDirection(activeArea === "head-office" ? "income" : "outgoing");
   updateRoleUi();
   activateDefaultTabForArea();
+}
+
+function setHeadOfficePage(page) {
+  if (!canAccessHeadOffice()) return;
+  activeHeadOfficePage = page || "dashboard";
+  updateHeadOfficePageUi();
+  if (activeHeadOfficePage === "transactions") {
+    activateTab("incomes");
+  }
 }
 
 function updateRoleUi() {
@@ -612,6 +622,22 @@ function updateRoleUi() {
       (button.dataset.area === "company-pos" && (activeArea === "company-pos" || role === "staff"))
       || (button.dataset.area === "head-office" && activeArea === "head-office" && role === "owner")
     ));
+  });
+  updateHeadOfficePageUi();
+}
+
+function updateHeadOfficePageUi() {
+  const isHeadOffice = Boolean(authSession?.access_token) && canAccessHeadOffice() && activeArea === "head-office";
+  document.querySelectorAll(".head-office-nav-button").forEach((button) => {
+    button.classList.toggle("active", isHeadOffice && button.dataset.headOfficePage === activeHeadOfficePage);
+  });
+  document.querySelectorAll("[data-head-office-content]").forEach((section) => {
+    if (!isHeadOffice) {
+      section.hidden = false;
+      return;
+    }
+    const content = section.dataset.headOfficeContent;
+    section.hidden = content !== activeHeadOfficePage;
   });
 }
 
@@ -1081,53 +1107,13 @@ async function refreshConfigStatus() {
   try {
     const configResponse = await fetch("/api/config");
     const config = await readJsonResponse(configResponse, "/api/config");
-    canSaveApiKey = config.canSaveApiKey !== false;
-    els.saveApiKeyBtn.disabled = !canSaveApiKey;
-    els.apiKeyInput.disabled = !canSaveApiKey;
     els.apiKeyStatus.textContent = config.hasApiKey
-      ? `OCR 已连接，模型：${config.model}`
-      : canSaveApiKey
-        ? "还没有保存 OpenAI API Key。"
-        : "线上 Vercel 还没有设置 OPENAI_API_KEY。请去 Vercel Project Settings > Environment Variables 添加后重新部署。";
+      ? "OCR状态：已连接"
+      : "OCR状态：未连接";
     els.apiKeyStatus.className = config.hasApiKey ? "ready" : "warning";
   } catch (error) {
-    els.apiKeyStatus.textContent = `无法连接 OCR 后端：${error.message || "请检查 API route。"}`;
+    els.apiKeyStatus.textContent = `OCR状态：未连接（${error.message || "请检查 API route。"}）`;
     els.apiKeyStatus.className = "warning";
-  }
-}
-
-async function saveApiKey() {
-  if (!canSaveApiKey) {
-    els.apiKeyStatus.textContent = "线上 Vercel 不能从网页保存 OpenAI API Key。请在 Vercel Environment Variables 设置 OPENAI_API_KEY 后重新部署。";
-    els.apiKeyStatus.className = "warning";
-    return;
-  }
-  const apiKey = els.apiKeyInput.value.trim();
-  if (!apiKey) {
-    els.apiKeyStatus.textContent = "请先粘贴 OpenAI API Key。";
-    els.apiKeyStatus.className = "warning";
-    return;
-  }
-
-  try {
-    els.saveApiKeyBtn.disabled = true;
-    els.apiKeyStatus.textContent = "正在保存 Key...";
-    els.apiKeyStatus.className = "";
-    const response = await fetch("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey, model: "gpt-5.5" })
-    });
-    const payload = await readJsonResponse(response, "/api/config");
-    if (!response.ok) throw new Error(payload.error || "保存失败。");
-    els.apiKeyInput.value = "";
-    els.apiKeyStatus.textContent = `Key 已保存，OCR 已连接，模型：${payload.model}`;
-    els.apiKeyStatus.className = "ready";
-  } catch (error) {
-    els.apiKeyStatus.textContent = error.message;
-    els.apiKeyStatus.className = "warning";
-  } finally {
-    els.saveApiKeyBtn.disabled = false;
   }
 }
 

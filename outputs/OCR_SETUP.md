@@ -4,13 +4,11 @@ This app now has a Node backend with an `/api/ocr` endpoint.
 
 ## Start with OpenAI OCR
 
-Create a local `.env` file in this same folder:
+For production, configure `OPENAI_API_KEY` only in Vercel Environment Variables, then redeploy.
 
-```bash
-cp .env.example .env
-```
+The browser must not show, input, save, or store the OpenAI API key. The app only displays whether OCR is connected.
 
-Edit `.env` and replace `sk-your-key-here` with your real OpenAI API key.
+For local development, start the server with `OPENAI_API_KEY` already available in the server environment.
 
 Then start:
 
@@ -34,8 +32,8 @@ OPENAI_MODEL=gpt-5.5 node server.mjs
 ## How it works
 
 1. Upload an invoice photo.
-2. Choose `出账`.
-3. Click `识别并记录`.
+2. Choose the correct document type.
+3. Click `识别`, review the result, then click `保存记录`.
 4. The browser sends the image to `/api/ocr`.
 5. The backend sends it to OpenAI Vision.
 6. OpenAI returns structured JSON.
