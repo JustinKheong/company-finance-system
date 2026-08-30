@@ -316,9 +316,12 @@ async function loadStateFromSupabase() {
     ]);
 
     const baseState = appRows?.[0]?.data || structuredClone(defaultState);
+    const visibleInvoiceRows = Array.isArray(invoiceRows) ? invoiceRows.filter((row) => !isPaymentReviewRow(row)) : [];
+    const reviewPaymentRows = Array.isArray(invoiceRows) ? invoiceRows.filter(isPaymentReviewRow) : [];
     state = normalizeState({
       ...baseState,
-      invoices: Array.isArray(invoiceRows) ? invoiceRows.map(invoiceFromRow) : [],
+      payments: mergeReviewPayments(baseState.payments || [], reviewPaymentRows.map(paymentFromReviewRow)),
+      invoices: visibleInvoiceRows.map(invoiceFromRow),
       inventory: inventoryFromRows(inventoryRows)
     });
     fixKnownUnknownSuppliers();
@@ -352,7 +355,7 @@ async function saveStateToSupabase() {
       await upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })]);
     } else {
       await upsertSupabaseRows("suppliers", supplierRowsFromState());
-      await upsertSupabaseRows("invoices", state.invoices.map(invoiceToRow));
+      await upsertSupabaseRows("invoices", [...state.invoices.map(invoiceToRow), ...paymentReviewRowsFromState()]);
       await upsertSupabaseRows("inventory", inventoryRowsFromState());
     }
     return true;
@@ -553,6 +556,7 @@ async function loadUserProfile() {
   }
   if (!canAccessHeadOffice()) activeArea = "company-pos";
   if (canAccessHeadOffice() && activeArea !== "company-pos") activeArea = "head-office";
+  setDirection(activeArea === "head-office" ? "income" : "outgoing");
   updateRoleUi();
   activateDefaultTabForArea();
   return userProfile;
@@ -581,6 +585,7 @@ function dataOwnerId() {
 
 function setActiveArea(area) {
   activeArea = area === "head-office" && canAccessHeadOffice() ? "head-office" : "company-pos";
+  setDirection(activeArea === "head-office" ? "income" : "outgoing");
   updateRoleUi();
   activateDefaultTabForArea();
 }
@@ -847,6 +852,64 @@ function invoiceFromRow(row) {
   };
 }
 
+function isPaymentReviewRow(row) {
+  return row?.metadata?.recordType === "payment_proof_review";
+}
+
+function paymentFromReviewRow(row) {
+  const payment = row.metadata?.payment || {};
+  return {
+    ...payment,
+    id: payment.id || unscopedRecordId(row.id).replace(/^payment-review-/, ""),
+    type: "payment_proof",
+    recipient: payment.recipient || row.supplier_name || "等待认领",
+    date: payment.date || row.invoice_date || new Date().toISOString().slice(0, 10),
+    reference: payment.reference || row.invoice_no || "-",
+    amount: toMoney(payment.amount || row.total),
+    matchedInvoiceId: null,
+    waitingClaim: true,
+    ownerReviewRequired: true,
+    reviewStatus: payment.reviewStatus || "pending_owner_review",
+    sourceLabel: payment.sourceLabel || "付款证明"
+  };
+}
+
+function mergeReviewPayments(savedPayments, reviewPayments) {
+  const merged = Array.isArray(savedPayments) ? [...savedPayments] : [];
+  reviewPayments.forEach((payment) => {
+    const exists = merged.some((item) => item.id === payment.id
+      || (sameDate(item.date, payment.date)
+        && sameMoney(item.amount, payment.amount)
+        && normalizeSearch(item.reference) === normalizeSearch(payment.reference)));
+    if (!exists) merged.push(payment);
+  });
+  return merged;
+}
+
+function paymentReviewRowsFromState() {
+  return (state.payments || [])
+    .filter((payment) => payment.ownerReviewRequired && !payment.matchedInvoiceId)
+    .map((payment) => withUserId({
+      id: scopedRecordId(`payment-review-${payment.id || payment.reference || crypto.randomUUID()}`),
+      supplier_id: null,
+      supplier_name: payment.recipient || "付款证明等待认领",
+      invoice_no: payment.reference || `PAYMENT-${Date.now()}`,
+      invoice_date: payment.date || null,
+      total: Number(payment.amount || 0),
+      paid: 0,
+      status: "Pending Owner Review",
+      items: [],
+      receipt_images: [],
+      receipt_file_names: [],
+      settlement_statement: null,
+      metadata: {
+        recordType: "payment_proof_review",
+        payment
+      },
+      updated_at: new Date().toISOString()
+    }));
+}
+
 function inventoryRowsFromState() {
   return Object.entries(state.inventory || {}).map(([key, item]) => withUserId({
     id: scopedRecordId(key || item.product || "unknown-product"),
@@ -1087,10 +1150,11 @@ function setDirection(direction) {
 function updateDetectedTypeFromDirection() {
   els.detectedType.textContent = ({
     income: "进账",
-    outgoing: "出账 Supplier Invoice",
-    repayment: "还账 Payment Proof",
+    outgoing: "Supplier Invoice",
+    repayment: activeArea === "company-pos" ? "付款证明" : "还账记录",
     expense: "个人支出",
-    settlement: "对账 PDF"
+    settlement: "对账 PDF",
+    other_receipt: "其他收据"
   })[selectedDirection] || "等待识别";
 }
 
@@ -1101,10 +1165,12 @@ function updateUploadStatusForDirection() {
 }
 
 function uploadReadyMessage() {
-  if (selectedDirection === "outgoing") return "已选择出账。识别后请按保存记录，才会进入待付款并更新 Inventory。";
-  if (selectedDirection === "repayment") return "已选择还账。识别后请按保存记录，才会记录付款并匹配未付款 Invoice。";
+  if (selectedDirection === "outgoing") return "已选择 Supplier Invoice。识别后请按保存记录，才会进入待付款并更新 Inventory。";
+  if (selectedDirection === "repayment" && activeArea === "company-pos") return "已选择付款证明。Staff 上传后会先进入等待 owner 审核，不会直接确认 Invoice 已付款。";
+  if (selectedDirection === "repayment") return "已选择还账记录。识别后请按保存记录，才会记录付款并匹配未付款 Invoice。";
   if (selectedDirection === "expense") return "已选择个人支出。识别后请按保存记录，才会进入个人支出并更新分类百分比。";
   if (selectedDirection === "settlement") return "已选择对账 PDF。识别后可生成双方拿货和欠款金额的 PDF。";
+  if (selectedDirection === "other_receipt") return "已选择其他收据。保存后会进入 Head Office 的等待认领区域，由 owner 再分类。";
   return "已选择进账。识别后请按保存记录，才会加入进账记录并更新滚动余额。";
 }
 
@@ -1125,7 +1191,7 @@ function resetData() {
   saveState();
   els.ocrText.value = "";
   els.ocrDetails.open = false;
-  els.uploadStatus.textContent = "上传后请选择进账、出账或还账，再按识别。";
+  els.uploadStatus.textContent = "上传后请选择凭证类型，再按识别。";
   els.uploadStatus.className = "upload-status";
   els.resultBox.innerHTML = "<p>暂无识别结果</p>";
   clearPendingRecord();
@@ -1163,7 +1229,7 @@ async function analyzeCurrentDocument() {
     return;
   }
 
-  const parsed = applyTransactionRules(parseDocument(text, selectedDirection), text);
+  const parsed = normalizeCompanyPosParsedRecord(applyTransactionRules(parseDocument(text, selectedDirection), text));
   setPendingRecord(parsed);
   renderResult(parsed);
   els.uploadStatus.textContent = "识别完成。请检查资料，然后按保存记录。";
@@ -1185,7 +1251,7 @@ async function recognizeUploadedFile() {
 
     const formData = new FormData();
     files.forEach((file) => formData.append("file", file));
-    formData.append("direction", selectedDirection);
+    formData.append("direction", ocrDirectionForSelectedDirection());
 
     const response = await fetch("/api/ocr", {
       method: "POST",
@@ -1197,7 +1263,7 @@ async function recognizeUploadedFile() {
       throw new Error(payload.error || "OCR 识别失败。");
     }
 
-    const parsed = applyTransactionRules(normalizeOcrPayload(payload), payload.rawText || JSON.stringify(payload));
+    const parsed = normalizeCompanyPosParsedRecord(applyTransactionRules(normalizeOcrPayload(payload), payload.rawText || JSON.stringify(payload)));
     if (parsed.type === "settlement_statement") {
       settlementDraft = parsed;
       setPendingRecord(parsed);
@@ -1284,6 +1350,9 @@ async function savePendingRecord() {
   pendingRecord = backupRecord;
   const record = structuredClone(pendingRecord);
   applySelectedRepaymentInvoice(record);
+  if (activeArea === "company-pos" && record.type === "payment_proof" && !canAccessHeadOffice()) {
+    Object.assign(record, pendingOwnerReviewPayment(record, record.sourceLabel || "付款证明"));
+  }
   if (record.type === "payment_proof" && (!record.amount || record.amount <= 0)) {
     els.uploadStatus.textContent = "还账金额是 0。请选择要还的 Invoice，系统会自动用剩余未付金额。";
     els.uploadStatus.className = "upload-status warning";
@@ -1327,16 +1396,31 @@ async function savePendingRecord() {
   }
   clearPendingRecord();
   setUndoButtonsVisible(true);
-  activateTab(record.type === "supplier_invoice" || record.type === "settlement_statement" ? "invoices" : ["income", "transaction_batch"].includes(record.type) ? "incomes" : record.type === "payment_proof" ? "payments" : "expenses");
+  activateTab(tabForSavedRecord(record));
   els.detectedType.textContent = "已保存";
   els.resultBox.innerHTML = `
     <div class="notice-box success">
       <strong>记录已保存到 Supabase</strong>
-      <p>${typeLabel(record.type)} 已经进入下面的记录表。其他设备用同一个 Email 登录后刷新就会看到。</p>
+      <p>${saveSuccessMessage(record)}</p>
       <p>页面已切换到 ${escapeHtml(selectedMonth)}，方便你看到刚保存的记录。</p>
     </div>`;
   els.uploadStatus.textContent = "记录已保存到 Supabase。";
   els.uploadStatus.className = "upload-status ready";
+}
+
+function saveSuccessMessage(record) {
+  if (record.type === "payment_proof" && record.ownerReviewRequired) {
+    return "付款证明已进入 Head Office 的等待认领区域，等待 owner 审核；系统还没有直接确认任何 Invoice 已付款。";
+  }
+  return `${typeLabel(record.type)} 已经进入下面的记录表。其他设备用同一个 Email 登录后刷新就会看到。`;
+}
+
+function tabForSavedRecord(record) {
+  if (activeArea === "company-pos") return "invoices";
+  if (record.type === "supplier_invoice" || record.type === "settlement_statement") return "invoices";
+  if (["income", "transaction_batch"].includes(record.type)) return "incomes";
+  if (record.type === "payment_proof") return "payments";
+  return "expenses";
 }
 
 function readRecordFromRenderedResult() {
@@ -1436,7 +1520,7 @@ function readRenderedType() {
   const text = els.detectedType.textContent.trim();
   if (text.includes("Supplier Invoice")) return "supplier_invoice";
   if (text.includes("个人支出")) return "personal_expenses";
-  if (text.includes("Payment Proof")) return "payment_proof";
+  if (text.includes("Payment Proof") || text.includes("付款证明") || text.includes("还账记录") || text.includes("其他收据")) return "payment_proof";
   if (text.includes("对账 PDF")) return "settlement_statement";
   if (text.includes("进账")) return "income";
   return null;
@@ -1502,6 +1586,13 @@ function applySelectedRepaymentInvoice(record) {
     record.matchedInvoiceId = null;
     return;
   }
+  if (selectedInvoiceId === "__claim__") {
+    record.matchedInvoiceId = null;
+    record.waitingClaim = true;
+    record.ownerReviewRequired = true;
+    record.reviewStatus = "pending_owner_review";
+    return;
+  }
   const invoice = state.invoices.find((item) => item.id === selectedInvoiceId);
   if (!invoice) return;
   const remaining = invoiceRemaining(invoice);
@@ -1512,6 +1603,13 @@ function applySelectedRepaymentInvoice(record) {
   }
   if (!record.reference || record.reference === "-") {
     record.reference = `Manual repayment - ${invoice.invoiceNo}`;
+  }
+  if (activeArea === "company-pos" && !canAccessHeadOffice()) {
+    record.requestedInvoiceId = invoice.id;
+    record.matchedInvoiceId = null;
+    record.waitingClaim = true;
+    record.ownerReviewRequired = true;
+    record.reviewStatus = "pending_owner_review";
   }
 }
 
@@ -1913,11 +2011,41 @@ function parseDocument(text, direction = "auto") {
   if (direction === "income") return parseIncome(text);
   if (direction === "outgoing") return parseSupplierInvoice(text);
   if (direction === "repayment") return parsePaymentProof(text);
+  if (direction === "other_receipt") return pendingOwnerReviewPayment(parsePaymentProof(text), "其他收据");
   if (direction === "expense") return parsePersonalExpense(text);
   const type = classifyText(text);
   if (type === "supplier_invoice") return parseSupplierInvoice(text);
   if (type === "payment_proof") return parsePaymentProof(text);
   return parsePersonalExpense(text);
+}
+
+function ocrDirectionForSelectedDirection() {
+  return selectedDirection === "other_receipt" ? "repayment" : selectedDirection;
+}
+
+function pendingOwnerReviewPayment(payment, sourceLabel = "付款证明") {
+  if (!payment || payment.type !== "payment_proof") return payment;
+  return {
+    ...payment,
+    matchedInvoiceId: null,
+    waitingClaim: true,
+    ownerReviewRequired: true,
+    reviewStatus: "pending_owner_review",
+    sourceLabel
+  };
+}
+
+function normalizeCompanyPosParsedRecord(parsed) {
+  if (selectedDirection === "other_receipt") {
+    return pendingOwnerReviewPayment(
+      parsed?.type === "payment_proof" ? parsed : parsePaymentProof(els.ocrText.value || JSON.stringify(parsed || {})),
+      "其他收据"
+    );
+  }
+  if (activeArea === "company-pos" && parsed?.type === "payment_proof" && !canAccessHeadOffice()) {
+    return pendingOwnerReviewPayment(parsed, "付款证明");
+  }
+  return parsed;
 }
 
 function applyTransactionRules(parsed, sourceText = "") {
@@ -3361,13 +3489,24 @@ function fieldLabel(key) {
     recipient: "收款人",
     reference: "Reference Number",
     receiptFileName: "单据照片",
-    receiptFileNames: "单据照片"
+    receiptFileNames: "单据照片",
+    waitingClaim: "等待认领",
+    ownerReviewRequired: "Owner 审核",
+    reviewStatus: "审核状态",
+    sourceLabel: "来源类型",
+    requestedInvoiceId: "Staff 选择的 Invoice"
   })[key] || key;
 }
 
 function formatValue(key, value, record = null) {
   if (["total", "paid", "amount"].includes(key)) return formatRecordMoney(record, value);
   if (key === "receiptFileNames" && Array.isArray(value)) return escapeHtml(value.join(", "));
+  if (key === "waitingClaim" || key === "ownerReviewRequired") return value ? "是" : "否";
+  if (key === "reviewStatus" && value === "pending_owner_review") return "等待 owner 审核";
+  if (key === "requestedInvoiceId") {
+    const invoice = state.invoices.find((item) => item.id === value);
+    return invoice ? `${escapeHtml(invoice.supplier)} / ${escapeHtml(invoice.invoiceNo)}` : escapeHtml(String(value || "-"));
+  }
   return escapeHtml(String(value));
 }
 

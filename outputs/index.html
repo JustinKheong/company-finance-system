@@ -84,7 +84,7 @@
         </article>
       </section>
 
-      <section class="workspace-grid protected-content company-pos-only">
+      <section class="workspace-grid protected-content">
         <article class="upload-panel">
           <div class="section-head">
             <div>
@@ -122,11 +122,13 @@
           <fieldset class="direction-control" aria-label="交易方向">
             <legend>这张凭证是</legend>
             <div class="segmented-control">
-              <button class="segment-button" data-direction="income" type="button">进账</button>
-              <button class="segment-button active" data-direction="outgoing" type="button">出账</button>
-              <button class="segment-button" data-direction="repayment" type="button">还账</button>
-              <button class="segment-button" data-direction="expense" type="button">个人支出</button>
-              <button class="segment-button" data-direction="settlement" type="button">对账 PDF</button>
+              <button class="segment-button head-office-only" data-direction="income" type="button">进账</button>
+              <button class="segment-button company-pos-only active" data-direction="outgoing" type="button">Supplier Invoice</button>
+              <button class="segment-button head-office-only" data-direction="expense" type="button">个人支出</button>
+              <button class="segment-button head-office-only" data-direction="repayment" type="button">还账记录</button>
+              <button class="segment-button company-pos-only" data-direction="repayment" type="button">付款证明</button>
+              <button class="segment-button company-pos-only" data-direction="other_receipt" type="button">其他收据</button>
+              <button class="segment-button head-office-only" data-direction="settlement" type="button">对账 PDF</button>
             </div>
           </fieldset>
 
@@ -173,7 +175,7 @@
 
       <section class="tabs protected-content" aria-label="记录">
         <div class="tab-list" role="tablist">
-          <button class="tab-button company-pos-only active" data-tab="invoices" type="button">Supplier Invoice</button>
+          <button class="tab-button active" data-tab="invoices" type="button">Supplier Invoice</button>
           <button class="tab-button head-office-only" data-tab="incomes" type="button">进账记录</button>
           <button class="tab-button head-office-only" data-tab="expenses" type="button">个人支出</button>
           <button class="tab-button head-office-only" data-tab="payments" type="button">付款证明</button>
@@ -181,7 +183,7 @@
           <button class="tab-button head-office-only" data-tab="rules" type="button">规则设定</button>
         </div>
 
-        <div id="invoices" class="tab-panel company-pos-only active">
+        <div id="invoices" class="tab-panel active">
           <div class="table-wrap">
             <table>
               <thead><tr><th>Supplier</th><th>Invoice</th><th>日期</th><th>金额</th><th>已付</th><th>状态</th><th>单据</th></tr></thead>
@@ -283,7 +285,7 @@
           <section class="rules-section">
             <div class="rules-head">
               <h3>等待认领</h3>
-              <p>进账里选择“等待认领”后，如果对应 Supplier / Invoice 还没上传，会先放在这里。</p>
+              <p>进账选择“等待认领”、Company POS 上传付款证明或其他收据后，会先放在这里给 owner 分类和确认。</p>
             </div>
             <div class="table-wrap">
               <table>
