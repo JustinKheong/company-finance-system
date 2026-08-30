@@ -1,3 +1,5 @@
+import { request as httpsRequest } from "node:https";
+
 export const config = {
   api: {
     bodyParser: {
@@ -31,24 +33,48 @@ export default async function handler(req, res) {
       return;
     }
 
-    const response = await fetch(`${supabaseUrl}/auth/v1${path}`, {
-      method: "POST",
-      headers: {
-        apikey: anonKey,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
+    const response = await postJson(`${supabaseUrl}/auth/v1${path}`, payload, {
+      apikey: anonKey,
+      "Content-Type": "application/json"
     });
-    const text = await response.text();
-    const contentType = response.headers.get("content-type") || "application/json; charset=utf-8";
+    const contentType = response.headers["content-type"] || "application/json; charset=utf-8";
     res.status(response.status);
     res.setHeader("Content-Type", contentType.includes("application/json") ? contentType : "application/json; charset=utf-8");
     if (contentType.includes("application/json")) {
-      res.send(text || "{}");
+      res.send(response.text || "{}");
     } else {
-      res.json({ error: text || "Supabase Auth returned a non-JSON response." });
+      res.json({ error: response.text || "Supabase Auth returned a non-JSON response." });
     }
   } catch (error) {
     res.status(500).json({ error: error.message || "Supabase Auth proxy failed." });
   }
+}
+
+function postJson(url, payload, headers) {
+  const target = new URL(url);
+  const body = JSON.stringify(payload || {});
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest({
+      hostname: target.hostname,
+      path: `${target.pathname}${target.search}`,
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Length": Buffer.byteLength(body)
+      }
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        resolve({
+          status: response.statusCode || 500,
+          headers: response.headers,
+          text: Buffer.concat(chunks).toString("utf8")
+        });
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
 }

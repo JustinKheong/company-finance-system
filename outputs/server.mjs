@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -137,25 +138,49 @@ async function handleSupabaseAuthProxy(req, res) {
     return;
   }
 
-  const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1${path}`, {
-    method: "POST",
-    headers: {
-      apikey: process.env.SUPABASE_ANON_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload.body || {})
+  const response = await postJson(`${process.env.SUPABASE_URL}/auth/v1${path}`, payload.body || {}, {
+    apikey: process.env.SUPABASE_ANON_KEY,
+    "Content-Type": "application/json"
   });
-  const text = await response.text();
-  const contentType = response.headers.get("content-type") || "application/json; charset=utf-8";
+  const contentType = response.headers["content-type"] || "application/json; charset=utf-8";
   if (contentType.includes("application/json")) {
     res.writeHead(response.status, {
       "Content-Type": contentType,
       "Cache-Control": "no-store"
     });
-    res.end(text || "{}");
+    res.end(response.text || "{}");
     return;
   }
-  sendJson(res, response.status, { error: text || "Supabase Auth returned a non-JSON response." });
+  sendJson(res, response.status, { error: response.text || "Supabase Auth returned a non-JSON response." });
+}
+
+function postJson(url, payload, headers) {
+  const target = new URL(url);
+  const body = JSON.stringify(payload || {});
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest({
+      hostname: target.hostname,
+      path: `${target.pathname}${target.search}`,
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Length": Buffer.byteLength(body)
+      }
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        resolve({
+          status: response.statusCode || 500,
+          headers: response.headers,
+          text: Buffer.concat(chunks).toString("utf8")
+        });
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 async function handleOcr(req, res) {
