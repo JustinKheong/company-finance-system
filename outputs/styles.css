@@ -958,6 +958,66 @@ tbody tr:last-child td { border-bottom: 0; }
   font-weight: 900;
 }
 
+.phase2-table-wrap input,
+.phase2-table-wrap select {
+  width: 100%;
+  min-width: 120px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 800;
+  color: var(--ink);
+  background: #fff;
+}
+
+.phase2-table-wrap input + input {
+  margin-top: 8px;
+}
+
+.phase2-match-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 260px;
+}
+
+.candidate-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.candidate-option span,
+.external-sku-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.candidate-option small,
+.inventory-history summary small,
+.muted-copy {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.review-action-grid {
+  display: grid;
+  gap: 6px;
+  min-width: 190px;
+}
+
+.secondary-btn.small {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 @media (max-width: 980px) {
   .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .last-record-grid {

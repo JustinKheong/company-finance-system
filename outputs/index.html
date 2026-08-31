@@ -244,6 +244,7 @@
           <button class="tab-button head-office-only" data-tab="incomes" type="button">进账记录</button>
           <button class="tab-button head-office-only" data-tab="expenses" type="button">个人支出</button>
           <button class="tab-button head-office-only" data-tab="payments" type="button">付款证明</button>
+          <button class="tab-button head-office-only" data-tab="productReviews" type="button">产品审核</button>
           <button class="tab-button company-pos-only" data-tab="inventory" type="button">Inventory</button>
           <button class="tab-button head-office-only" data-tab="rules" type="button">规则设定</button>
         </div>
@@ -372,6 +373,20 @@
             </div>
           </section>
         </div>
+        <div id="productReviews" class="tab-panel head-office-only">
+          <section class="rules-section">
+            <div class="rules-head">
+              <h3>待审核产品</h3>
+              <p>Staff 提交的产品匹配、新增 Loyverse 产品草稿和成本确认会先停在这里。本阶段只做 Mock，不连接真实 Loyverse API。</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>提交时间</th><th>Invoice</th><th>产品</th><th>成本</th><th>Mock 候选</th><th>建议名称</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="productReviewRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
         <div id="inventory" class="tab-panel company-pos-only">
           <div class="rename-rules">
             <div class="rules-head">
@@ -407,7 +422,7 @@
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>产品</th><th>最新成本</th><th>单一产品成本计算器</th><th>最新 Invoice 日期</th><th>Supplier</th></tr></thead>
+              <thead><tr><th>产品</th><th>最新成本</th><th>单一产品成本计算器</th><th>最新 Invoice 日期</th><th>Supplier</th><th>平台匹配</th></tr></thead>
               <tbody id="inventoryRows"></tbody>
             </table>
           </div>

@@ -99,7 +99,20 @@ async function handleSupabaseRestProxy(req, res) {
     return;
   }
   const tableName = path.split("?")[0].split("/").filter(Boolean)[0] || "";
-  const allowedTables = new Set(["profiles", "suppliers", "invoices", "inventory", "app_state"]);
+  const allowedTables = new Set([
+    "profiles",
+    "suppliers",
+    "invoices",
+    "inventory",
+    "app_state",
+    "products",
+    "product_channel_mappings",
+    "supplier_product_mappings",
+    "product_cost_history",
+    "mock_loyverse_catalog",
+    "product_match_reviews",
+    "channel_sync_logs"
+  ]);
   if (!allowedTables.has(tableName)) {
     sendJson(res, 403, { error: "This Supabase table is not exposed by the app API." });
     return;

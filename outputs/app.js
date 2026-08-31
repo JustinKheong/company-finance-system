@@ -55,8 +55,54 @@ const defaultState = {
     }
   ],
   costCalculators: {},
-  inventory: {}
+  inventory: {},
+  products: {},
+  productChannelMappings: [],
+  supplierProductMappings: [],
+  productCostHistory: [],
+  productMatchReviews: [],
+  channelSyncLogs: [],
+  mockLoyverseCatalog: []
 };
+
+const defaultMockLoyverseCatalog = [
+  {
+    id: "mock-loyverse-lee-soy",
+    mockLoyverseItemId: "mock-item-lee-soy",
+    mockLoyverseVariantId: "mock-var-lee-soy",
+    productName: "李 生抽",
+    sku: "",
+    barcode: "",
+    supplier: "Ben Mart"
+  },
+  {
+    id: "mock-loyverse-lee-soy-lf",
+    mockLoyverseItemId: "mock-item-lee-soy-lf",
+    mockLoyverseVariantId: "mock-var-lee-soy-lf",
+    productName: "李 生抽 LF",
+    sku: "",
+    barcode: "",
+    supplier: "Loong Fatt"
+  },
+  {
+    id: "mock-loyverse-coconut-chicken",
+    mockLoyverseItemId: "mock-item-coconut-chicken",
+    mockLoyverseVariantId: "mock-var-coconut-chicken",
+    productName: "椰子鸡汤",
+    sku: "SF-MOCK-001",
+    barcode: "",
+    supplier: "Ben Mart"
+  },
+  {
+    id: "mock-loyverse-fried-shallots",
+    mockLoyverseItemId: "mock-item-fried-shallots",
+    mockLoyverseVariantId: "mock-var-fried-shallots",
+    productName: "Fried Shallots",
+    sku: "",
+    barcode: "",
+    supplier: "NMT Food Industries"
+  }
+];
 
 let state = loadState();
 let selectedDirection = "outgoing";
@@ -109,6 +155,7 @@ const els = {
   expensePercentRows: document.querySelector("#expensePercentRows"),
   pendingPaymentRows: document.querySelector("#pendingPaymentRows"),
   matchedPaymentRows: document.querySelector("#matchedPaymentRows"),
+  productReviewRows: document.querySelector("#productReviewRows"),
   inventoryRows: document.querySelector("#inventoryRows"),
   inventorySearch: document.querySelector("#inventorySearch"),
   inventorySearchStatus: document.querySelector("#inventorySearchStatus"),
@@ -151,6 +198,7 @@ els.undoSaveBtn.addEventListener("click", undoLastSave);
 els.saveRecordReviewBtn.addEventListener("click", savePendingRecord);
 els.undoSaveReviewBtn.addEventListener("click", undoLastSave);
 els.generatePdfBtn.addEventListener("click", generateSettlementPdf);
+els.resultBox.addEventListener("input", handlePhase2ResultInput);
 els.repaymentInvoiceSelect.addEventListener("change", handleRepaymentInvoiceSelection);
 els.repaymentInvoiceSelect.addEventListener("change", updateManualRepaymentSaveState);
 document.querySelector("#exportBtn").addEventListener("click", exportData);
@@ -171,6 +219,7 @@ els.addExpenseRuleBtn.addEventListener("click", addExpenseRule);
 els.expenseRuleRows.addEventListener("click", handleRuleTableClick);
 els.invoiceRows.addEventListener("click", handleInvoiceRowClick);
 els.pendingPaymentRows.addEventListener("click", handlePendingPaymentAction);
+els.productReviewRows.addEventListener("click", handleProductReviewAction);
 els.closeInvoiceDialogBtn.addEventListener("click", () => els.invoiceDialog.close());
 els.lastRecordCards.addEventListener("click", handleLastRecordClick);
 document.querySelectorAll(".area-button").forEach((button) => {
@@ -259,7 +308,14 @@ function normalizeState(value) {
     outgoingRules: mergeDefaultRules(value?.outgoingRules, defaultState.outgoingRules),
     renameRules: Array.isArray(value?.renameRules) ? value.renameRules : structuredClone(defaultState.renameRules),
     costCalculators: value?.costCalculators || {},
-    inventory: value?.inventory || {}
+    inventory: value?.inventory || {},
+    products: value?.products || {},
+    productChannelMappings: Array.isArray(value?.productChannelMappings) ? value.productChannelMappings : [],
+    supplierProductMappings: Array.isArray(value?.supplierProductMappings) ? value.supplierProductMappings : [],
+    productCostHistory: Array.isArray(value?.productCostHistory) ? value.productCostHistory : [],
+    productMatchReviews: Array.isArray(value?.productMatchReviews) ? value.productMatchReviews : [],
+    channelSyncLogs: Array.isArray(value?.channelSyncLogs) ? value.channelSyncLogs : [],
+    mockLoyverseCatalog: mergeMockLoyverseCatalog(value?.mockLoyverseCatalog)
   };
   if (value && value.balanceMode !== "opening_balance") {
     normalized.cashOnHand = toMoney((Number(value.cashOnHand) || 0) - ledgerDeltaThroughMonth(normalized, currentMonth()));
@@ -287,6 +343,15 @@ function incomeRulesWithoutLegacyDefaults(savedRules) {
   return Array.isArray(savedRules) ? savedRules.filter((rule) => !legacyDefaultIds.has(rule.id)) : [];
 }
 
+function mergeMockLoyverseCatalog(savedCatalog) {
+  const existing = Array.isArray(savedCatalog) ? savedCatalog : [];
+  const existingIds = new Set(existing.map((item) => item.id));
+  return [
+    ...existing,
+    ...defaultMockLoyverseCatalog.filter((item) => !existingIds.has(item.id))
+  ];
+}
+
 function saveState() {
   return saveStateToSupabase();
 }
@@ -311,10 +376,17 @@ async function loadStateFromSupabase() {
     const appStateRequest = canAccessHeadOffice()
       ? supabaseRequest(`/app_state?id=eq.${encodeURIComponent(appStateId())}&select=data`)
       : Promise.resolve([]);
-    const [appRows, invoiceRows, inventoryRows] = await Promise.all([
+    const [appRows, invoiceRows, inventoryRows, productRows, channelMappingRows, supplierMappingRows, costHistoryRows, mockCatalogRows, reviewRows, syncLogRows] = await Promise.all([
       appStateRequest,
       supabaseRequest("/invoices?select=*"),
-      supabaseRequest("/inventory?select=*")
+      supabaseRequest("/inventory?select=*"),
+      optionalSupabaseRequest("/products?select=*", []),
+      optionalSupabaseRequest("/product_channel_mappings?select=*", []),
+      optionalSupabaseRequest("/supplier_product_mappings?select=*", []),
+      optionalSupabaseRequest("/product_cost_history?select=*", []),
+      optionalSupabaseRequest("/mock_loyverse_catalog?select=*", []),
+      optionalSupabaseRequest("/product_match_reviews?select=*", []),
+      optionalSupabaseRequest("/channel_sync_logs?select=*", [])
     ]);
 
     const baseState = appRows?.[0]?.data || structuredClone(defaultState);
@@ -324,10 +396,18 @@ async function loadStateFromSupabase() {
       ...baseState,
       payments: mergeReviewPayments(baseState.payments || [], reviewPaymentRows.map(paymentFromReviewRow)),
       invoices: visibleInvoiceRows.map(invoiceFromRow),
-      inventory: inventoryFromRows(inventoryRows)
+      inventory: inventoryFromRows(inventoryRows),
+      products: productsFromRows(productRows, baseState.products),
+      productChannelMappings: productChannelMappingsFromRows(channelMappingRows, baseState.productChannelMappings),
+      supplierProductMappings: supplierProductMappingsFromRows(supplierMappingRows, baseState.supplierProductMappings),
+      productCostHistory: productCostHistoryFromRows(costHistoryRows, baseState.productCostHistory),
+      mockLoyverseCatalog: mockLoyverseCatalogFromRows(mockCatalogRows, baseState.mockLoyverseCatalog),
+      productMatchReviews: productMatchReviewsFromRows(reviewRows, baseState.productMatchReviews),
+      channelSyncLogs: channelSyncLogsFromRows(syncLogRows, baseState.channelSyncLogs)
     });
     fixKnownUnknownSuppliers();
     rebuildInventoryFromInvoices();
+    migrateExistingInventoryToCatalog();
     reapplyIncomeRules();
     reapplyExpenseRules();
     render();
@@ -354,11 +434,25 @@ async function saveStateToSupabase() {
       await replaceSupabaseTable("suppliers", supplierRowsFromState());
       await replaceSupabaseTable("invoices", state.invoices.map(invoiceToRow));
       await replaceSupabaseTable("inventory", inventoryRowsFromState());
+      await replaceOptionalSupabaseTable("products", productRowsFromState());
+      await replaceOptionalSupabaseTable("product_channel_mappings", productChannelMappingRowsFromState());
+      await replaceOptionalSupabaseTable("supplier_product_mappings", supplierProductMappingRowsFromState());
+      await replaceOptionalSupabaseTable("product_cost_history", productCostHistoryRowsFromState());
+      await replaceOptionalSupabaseTable("mock_loyverse_catalog", mockLoyverseCatalogRowsFromState());
+      await replaceOptionalSupabaseTable("product_match_reviews", productMatchReviewRowsFromState());
+      await replaceOptionalSupabaseTable("channel_sync_logs", channelSyncLogRowsFromState());
       await upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })]);
     } else {
       await upsertSupabaseRows("suppliers", supplierRowsFromState());
       await upsertSupabaseRows("invoices", [...state.invoices.map(invoiceToRow), ...paymentReviewRowsFromState()]);
       await upsertSupabaseRows("inventory", inventoryRowsFromState());
+      await upsertOptionalSupabaseRows("products", productRowsFromState());
+      await upsertOptionalSupabaseRows("product_channel_mappings", productChannelMappingRowsFromState());
+      await upsertOptionalSupabaseRows("supplier_product_mappings", supplierProductMappingRowsFromState());
+      await upsertOptionalSupabaseRows("product_cost_history", productCostHistoryRowsFromState());
+      await upsertOptionalSupabaseRows("mock_loyverse_catalog", mockLoyverseCatalogRowsFromState());
+      await upsertOptionalSupabaseRows("product_match_reviews", productMatchReviewRowsFromState());
+      await upsertOptionalSupabaseRows("channel_sync_logs", channelSyncLogRowsFromState());
     }
     return true;
   } catch (error) {
@@ -646,7 +740,7 @@ function activateDefaultTabForArea() {
   if ((activeArea === "company-pos" || !canAccessHeadOffice()) && !["invoices", "inventory"].includes(activeTab)) {
     activateTab("invoices");
   }
-  if (activeArea === "head-office" && canAccessHeadOffice() && !["incomes", "expenses", "payments", "rules"].includes(activeTab)) {
+  if (activeArea === "head-office" && canAccessHeadOffice() && !["incomes", "expenses", "payments", "productReviews", "rules"].includes(activeTab)) {
     activateTab("incomes");
   }
 }
@@ -772,6 +866,25 @@ async function supabaseRequest(path, options = {}) {
   return readJsonResponse(response, `Supabase REST ${path}`, { allowEmpty: true });
 }
 
+async function optionalSupabaseRequest(path, fallback) {
+  try {
+    const result = await supabaseRequest(path);
+    return result ?? fallback;
+  } catch (error) {
+    if (isMissingPhase2TableError(error)) return fallback;
+    throw error;
+  }
+}
+
+function isMissingPhase2TableError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("does not exist")
+    || message.includes("schema cache")
+    || message.includes("not exposed")
+    || message.includes("could not find")
+    || message.includes("404");
+}
+
 async function fetchWithRetry(url, options, label) {
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -816,6 +929,14 @@ async function replaceSupabaseTable(table, rows) {
   if (rows.length) await upsertSupabaseRows(table, rows);
 }
 
+async function replaceOptionalSupabaseTable(table, rows) {
+  try {
+    await replaceSupabaseTable(table, rows);
+  } catch (error) {
+    if (!isMissingPhase2TableError(error)) throw error;
+  }
+}
+
 async function upsertSupabaseRows(table, rows) {
   return supabaseRequest(`/${table}?on_conflict=id`, {
     method: "POST",
@@ -824,8 +945,29 @@ async function upsertSupabaseRows(table, rows) {
   });
 }
 
+async function upsertOptionalSupabaseRows(table, rows) {
+  if (!rows.length) return null;
+  try {
+    return await upsertSupabaseRows(table, rows);
+  } catch (error) {
+    if (isMissingPhase2TableError(error)) return null;
+    throw error;
+  }
+}
+
 function appStatePayload() {
-  const { invoices, inventory, ...rest } = state;
+  const {
+    invoices,
+    inventory,
+    products,
+    productChannelMappings,
+    supplierProductMappings,
+    productCostHistory,
+    productMatchReviews,
+    channelSyncLogs,
+    mockLoyverseCatalog,
+    ...rest
+  } = state;
   return rest;
 }
 
@@ -965,6 +1107,333 @@ function inventoryFromRows(rows) {
     };
     return inventory;
   }, {}) : {};
+}
+
+function productRowsFromState() {
+  return Object.values(state.products || {}).map((product) => withUserId({
+    internal_product_id: product.internalProductId,
+    internal_sku: product.internalSku,
+    standard_name: product.standardName || product.product || "Unknown Product",
+    brand: product.brand || "",
+    size: product.size || "",
+    pack_size: product.packSize || "",
+    barcode: product.barcode || "",
+    supplier_product_code: product.supplierProductCode || "",
+    supplier_id: product.supplierId || (product.supplierName || product.supplier ? supplierId(product.supplierName || product.supplier) : null),
+    supplier_name: product.supplierName || product.supplier || "",
+    metadata: product,
+    updated_at: new Date().toISOString()
+  })).filter((row) => row.internal_product_id && row.internal_sku);
+}
+
+function productsFromRows(rows, fallback = {}) {
+  if (!Array.isArray(rows) || !rows.length) return fallback || {};
+  return rows.reduce((products, row) => {
+    const product = {
+      ...(row.metadata || {}),
+      internalProductId: row.internal_product_id,
+      internalSku: row.internal_sku,
+      standardName: row.standard_name,
+      brand: row.brand || "",
+      size: row.size || "",
+      packSize: row.pack_size || "",
+      barcode: row.barcode || "",
+      supplierProductCode: row.supplier_product_code || "",
+      supplierId: row.supplier_id || "",
+      supplierName: row.supplier_name || "",
+      createdAt: row.created_at || row.metadata?.createdAt,
+      updatedAt: row.updated_at || row.metadata?.updatedAt
+    };
+    products[product.internalProductId] = product;
+    return products;
+  }, {});
+}
+
+function productChannelMappingRowsFromState() {
+  return (state.productChannelMappings || []).map((mapping) => withUserId({
+    id: mapping.id,
+    internal_product_id: mapping.internalProductId,
+    channel: mapping.channel,
+    channel_product_id: mapping.channelProductId || "",
+    channel_variant_id: mapping.channelVariantId || "",
+    channel_sku: mapping.channelSku || "",
+    barcode: mapping.barcode || "",
+    metadata: mapping,
+    updated_at: new Date().toISOString()
+  })).filter((row) => row.id && row.internal_product_id && row.channel);
+}
+
+function productChannelMappingsFromRows(rows, fallback = []) {
+  if (!Array.isArray(rows) || !rows.length) return Array.isArray(fallback) ? fallback : [];
+  return rows.map((row) => ({
+    ...(row.metadata || {}),
+    id: row.id,
+    internalProductId: row.internal_product_id,
+    channel: row.channel,
+    channelProductId: row.channel_product_id || "",
+    channelVariantId: row.channel_variant_id || "",
+    channelSku: row.channel_sku || "",
+    barcode: row.barcode || ""
+  }));
+}
+
+function supplierProductMappingRowsFromState() {
+  return (state.supplierProductMappings || []).map((mapping) => withUserId({
+    id: mapping.id,
+    normalized_invoice_product_name: mapping.normalizedInvoiceProductName,
+    supplier_id: mapping.supplierId || null,
+    supplier_product_code: mapping.supplierProductCode || "",
+    internal_product_id: mapping.internalProductId,
+    internal_sku: mapping.internalSku,
+    loyverse_item_id: mapping.loyverseItemId || "",
+    loyverse_variant_id: mapping.loyverseVariantId || "",
+    loyverse_sku: mapping.loyverseSku || "",
+    bigseller_sku: mapping.bigsellerSku || "",
+    woocommerce_sku: mapping.woocommerceSku || "",
+    barcode: mapping.barcode || "",
+    confirmed_by: mapping.confirmedBy || null,
+    confirmed_at: mapping.confirmedAt || null,
+    metadata: mapping,
+    updated_at: new Date().toISOString()
+  })).filter((row) => row.id && row.normalized_invoice_product_name && row.internal_product_id);
+}
+
+function supplierProductMappingsFromRows(rows, fallback = []) {
+  if (!Array.isArray(rows) || !rows.length) return Array.isArray(fallback) ? fallback : [];
+  return rows.map((row) => ({
+    ...(row.metadata || {}),
+    id: row.id,
+    normalizedInvoiceProductName: row.normalized_invoice_product_name,
+    supplierId: row.supplier_id || "",
+    supplierProductCode: row.supplier_product_code || "",
+    internalProductId: row.internal_product_id,
+    internalSku: row.internal_sku,
+    loyverseItemId: row.loyverse_item_id || "",
+    loyverseVariantId: row.loyverse_variant_id || "",
+    loyverseSku: row.loyverse_sku || "",
+    bigsellerSku: row.bigseller_sku || "",
+    woocommerceSku: row.woocommerce_sku || "",
+    barcode: row.barcode || "",
+    confirmedBy: row.confirmed_by || "",
+    confirmedAt: row.confirmed_at || ""
+  }));
+}
+
+function productCostHistoryRowsFromState() {
+  return (state.productCostHistory || []).map((entry) => withUserId({
+    id: entry.id,
+    internal_product_id: entry.internalProductId,
+    supplier_id: entry.supplierId || (entry.supplierName || entry.supplier ? supplierId(entry.supplierName || entry.supplier) : null),
+    supplier_name: entry.supplierName || entry.supplier || "",
+    invoice_id: entry.invoiceId || null,
+    invoice_number: entry.invoiceNumber || entry.invoiceNo || "",
+    invoice_date: entry.invoiceDate || entry.date || null,
+    original_product_name: entry.originalProductName || "",
+    brand: entry.brand || "",
+    standard_name: entry.standardName || "",
+    size: entry.size || "",
+    pack_size: entry.packSize || "",
+    barcode: entry.barcode || "",
+    supplier_product_code: entry.supplierProductCode || "",
+    line_total_cost: Number(entry.lineTotalCost || entry.total || 0),
+    quantity: Number(entry.quantity || entry.qty || 0),
+    unit_cost: Number(entry.unitCost || entry.unitPrice || 0),
+    currency: entry.currency || "MYR",
+    receipt_images: (entry.receiptImages || []).map(limitReceiptPreview),
+    uploaded_by: entry.uploadedBy || null,
+    confirmed_by: entry.confirmedBy || null,
+    metadata: entry
+  })).filter((row) => row.id && row.internal_product_id);
+}
+
+function productCostHistoryFromRows(rows, fallback = []) {
+  if (!Array.isArray(rows) || !rows.length) return Array.isArray(fallback) ? fallback : [];
+  return rows.map((row) => ({
+    ...(row.metadata || {}),
+    id: row.id,
+    internalProductId: row.internal_product_id,
+    supplierId: row.supplier_id || "",
+    supplierName: row.supplier_name || "",
+    invoiceId: row.invoice_id || "",
+    invoiceNumber: row.invoice_number || "",
+    invoiceDate: row.invoice_date || "",
+    originalProductName: row.original_product_name || "",
+    brand: row.brand || "",
+    standardName: row.standard_name || "",
+    size: row.size || "",
+    packSize: row.pack_size || "",
+    barcode: row.barcode || "",
+    supplierProductCode: row.supplier_product_code || "",
+    lineTotalCost: Number(row.line_total_cost || 0),
+    quantity: Number(row.quantity || 0),
+    unitCost: Number(row.unit_cost || 0),
+    currency: row.currency || "MYR",
+    receiptImages: row.receipt_images || [],
+    uploadedBy: row.uploaded_by || "",
+    confirmedBy: row.confirmed_by || "",
+    createdAt: row.created_at || ""
+  }));
+}
+
+function mockLoyverseCatalogRowsFromState() {
+  return (state.mockLoyverseCatalog || []).map((item) => withUserId({
+    id: item.id,
+    mock_loyverse_item_id: item.mockLoyverseItemId,
+    mock_loyverse_variant_id: item.mockLoyverseVariantId,
+    product_name: item.productName,
+    sku: item.sku || "",
+    barcode: item.barcode || "",
+    supplier: item.supplier || "",
+    status: item.status || "mock_catalog",
+    metadata: item,
+    updated_at: new Date().toISOString()
+  })).filter((row) => row.id && row.mock_loyverse_item_id && row.mock_loyverse_variant_id && row.product_name);
+}
+
+function mockLoyverseCatalogFromRows(rows, fallback = []) {
+  if (!Array.isArray(rows) || !rows.length) return mergeMockLoyverseCatalog(fallback);
+  const mapped = rows.map((row) => ({
+    ...(row.metadata || {}),
+    id: row.id,
+    mockLoyverseItemId: row.mock_loyverse_item_id,
+    mockLoyverseVariantId: row.mock_loyverse_variant_id,
+    productName: row.product_name,
+    sku: row.sku || "",
+    barcode: row.barcode || "",
+    supplier: row.supplier || "",
+    status: row.status || "mock_catalog"
+  }));
+  return mergeMockLoyverseCatalog(mapped);
+}
+
+function productMatchReviewRowsFromState() {
+  return (state.productMatchReviews || []).map((review) => withUserId({
+    id: review.id,
+    invoice_id: review.invoiceId || null,
+    invoice_number: review.invoiceNumber || "",
+    invoice_date: review.invoiceDate || null,
+    supplier_id: review.supplierId || (review.supplierName ? supplierId(review.supplierName) : null),
+    supplier_name: review.supplierName || "",
+    review_status: review.reviewStatus || "pending_owner_review",
+    original_product_name: review.originalProductName || "",
+    brand: review.brand || "",
+    standard_name: review.standardName || "",
+    size: review.size || "",
+    pack_size: review.packSize || "",
+    barcode: review.barcode || "",
+    supplier_product_code: review.supplierProductCode || "",
+    quantity: Number(review.quantity || 0),
+    line_total_cost: Number(review.lineTotalCost || 0),
+    unit_cost: Number(review.unitCost || 0),
+    currency: review.currency || "MYR",
+    internal_product_id: review.internalProductId || null,
+    internal_sku: review.internalSku || "",
+    selected_candidate_id: review.selectedCandidateId || "",
+    match_score: Number(review.matchScore || 0),
+    match_reason: review.matchReason || "",
+    generated_product_name: review.generatedProductName || "",
+    loyverse_item_id: review.loyverseItemId || "",
+    loyverse_variant_id: review.loyverseVariantId || "",
+    loyverse_sku: review.loyverseSku || "",
+    bigseller_sku: review.bigsellerSku || "",
+    woocommerce_sku: review.woocommerceSku || "",
+    is_new_loyverse_product: Boolean(review.isNewLoyverseProduct),
+    submitted_by: review.submittedBy || null,
+    submitted_at: review.submittedAt || new Date().toISOString(),
+    reviewed_by: review.reviewedBy || null,
+    reviewed_at: review.reviewedAt || null,
+    review_note: review.reviewNote || "",
+    mock_sync_status: review.mockSyncStatus || "",
+    mock_sync_response: review.mockSyncResponse || null,
+    error_message: review.errorMessage || "",
+    candidates: review.candidates || [],
+    receipt_images: (review.receiptImages || []).map(limitReceiptPreview),
+    metadata: review,
+    updated_at: new Date().toISOString()
+  })).filter((row) => row.id);
+}
+
+function productMatchReviewsFromRows(rows, fallback = []) {
+  if (!Array.isArray(rows) || !rows.length) return Array.isArray(fallback) ? fallback : [];
+  return rows.map((row) => ({
+    ...(row.metadata || {}),
+    id: row.id,
+    invoiceId: row.invoice_id || "",
+    invoiceNumber: row.invoice_number || "",
+    invoiceDate: row.invoice_date || "",
+    supplierId: row.supplier_id || "",
+    supplierName: row.supplier_name || "",
+    reviewStatus: row.review_status || "pending_owner_review",
+    originalProductName: row.original_product_name || "",
+    brand: row.brand || "",
+    standardName: row.standard_name || "",
+    size: row.size || "",
+    packSize: row.pack_size || "",
+    barcode: row.barcode || "",
+    supplierProductCode: row.supplier_product_code || "",
+    quantity: Number(row.quantity || 0),
+    lineTotalCost: Number(row.line_total_cost || 0),
+    unitCost: Number(row.unit_cost || 0),
+    currency: row.currency || "MYR",
+    internalProductId: row.internal_product_id || "",
+    internalSku: row.internal_sku || "",
+    selectedCandidateId: row.selected_candidate_id || "",
+    matchScore: Number(row.match_score || 0),
+    matchReason: row.match_reason || "",
+    generatedProductName: row.generated_product_name || "",
+    loyverseItemId: row.loyverse_item_id || "",
+    loyverseVariantId: row.loyverse_variant_id || "",
+    loyverseSku: row.loyverse_sku || "",
+    bigsellerSku: row.bigseller_sku || "",
+    woocommerceSku: row.woocommerce_sku || "",
+    isNewLoyverseProduct: Boolean(row.is_new_loyverse_product),
+    submittedBy: row.submitted_by || "",
+    submittedAt: row.submitted_at || "",
+    reviewedBy: row.reviewed_by || "",
+    reviewedAt: row.reviewed_at || "",
+    reviewNote: row.review_note || "",
+    mockSyncStatus: row.mock_sync_status || "",
+    mockSyncResponse: row.mock_sync_response || null,
+    errorMessage: row.error_message || "",
+    candidates: row.candidates || [],
+    receiptImages: row.receipt_images || [],
+    createdAt: row.created_at || ""
+  }));
+}
+
+function channelSyncLogRowsFromState() {
+  return (state.channelSyncLogs || []).map((log) => withUserId({
+    id: log.id,
+    internal_product_id: log.internalProductId || null,
+    review_id: log.reviewId || null,
+    channel: log.channel || "loyverse_mock",
+    sync_status: log.syncStatus || "mocked",
+    updated_by: log.updatedBy || null,
+    updated_at: log.updatedAt || new Date().toISOString(),
+    old_value: log.oldValue || null,
+    new_value: log.newValue || null,
+    api_response: log.apiResponse || null,
+    error_message: log.errorMessage || "",
+    metadata: log
+  })).filter((row) => row.id && row.channel);
+}
+
+function channelSyncLogsFromRows(rows, fallback = []) {
+  if (!Array.isArray(rows) || !rows.length) return Array.isArray(fallback) ? fallback : [];
+  return rows.map((row) => ({
+    ...(row.metadata || {}),
+    id: row.id,
+    internalProductId: row.internal_product_id || "",
+    reviewId: row.review_id || "",
+    channel: row.channel,
+    syncStatus: row.sync_status,
+    updatedBy: row.updated_by || "",
+    updatedAt: row.updated_at || "",
+    oldValue: row.old_value || null,
+    newValue: row.new_value || null,
+    apiResponse: row.api_response || null,
+    errorMessage: row.error_message || ""
+  }));
 }
 
 function supplierId(name) {
@@ -1338,6 +1807,7 @@ async function savePendingRecord() {
     return;
   }
   pendingRecord = backupRecord;
+  applyPhase2InvoiceInputs(pendingRecord);
   const record = structuredClone(pendingRecord);
   applySelectedRepaymentInvoice(record);
   if (activeArea === "company-pos" && record.type === "payment_proof" && !canAccessHeadOffice()) {
@@ -1402,7 +1872,64 @@ function saveSuccessMessage(record) {
   if (record.type === "payment_proof" && record.ownerReviewRequired) {
     return "付款证明已进入 Head Office 的等待认领区域，等待 owner 审核；系统还没有直接确认任何 Invoice 已付款。";
   }
+  if (record.type === "supplier_invoice") {
+    return "Supplier Invoice 已保存，Inventory 已更新，并已建立产品匹配审核记录给 owner 确认。";
+  }
   return `${typeLabel(record.type)} 已经进入下面的记录表。其他设备用同一个 Email 登录后刷新就会看到。`;
+}
+
+function applyPhase2InvoiceInputs(record) {
+  if (record?.type !== "supplier_invoice") return;
+  record.items = (record.items || []).map((item, index) => {
+    const row = els.resultBox.querySelector(`[data-phase2-item="${index}"]`);
+    if (!row) return enrichInvoiceItemForPhase2(record, item, index);
+    const updated = {
+      ...item,
+      brand: row.querySelector("[data-phase2-field='brand']")?.value?.trim() || "",
+      standardName: row.querySelector("[data-phase2-field='standardName']")?.value?.trim() || item.standardName || item.product,
+      size: row.querySelector("[data-phase2-field='size']")?.value?.trim() || "",
+      packSize: row.querySelector("[data-phase2-field='packSize']")?.value?.trim() || "",
+      supplierProductCode: row.querySelector("[data-phase2-field='supplierProductCode']")?.value?.trim() || "",
+      barcode: row.querySelector("[data-phase2-field='barcode']")?.value?.trim() || "",
+      quantity: Number(row.querySelector("[data-phase2-field='quantity']")?.value || item.quantity || item.qty || 0),
+      qty: Number(row.querySelector("[data-phase2-field='quantity']")?.value || item.quantity || item.qty || 0),
+      lineTotalCost: toMoney(row.querySelector("[data-phase2-field='lineTotalCost']")?.value || item.lineTotalCost || item.total || 0),
+      phase2Action: row.querySelector("[data-phase2-field='action']")?.value || item.phase2Action || "match_existing",
+      selectedCandidateId: row.querySelector("[data-phase2-field='candidate']:checked")?.value || "",
+      bigsellerSku: row.querySelector("[data-phase2-field='bigsellerSku']")?.value?.trim() || "",
+      woocommerceSku: row.querySelector("[data-phase2-field='woocommerceSku']")?.value?.trim() || "",
+      internalSku: row.querySelector("[data-phase2-field='internalSku']")?.value?.trim() || item.internalSku || ""
+    };
+    updated.product = updated.standardName;
+    updated.total = updated.lineTotalCost;
+    updated.unitCost = updated.quantity ? toMoney(updated.lineTotalCost / updated.quantity) : 0;
+    updated.unitPrice = updated.unitCost;
+    return enrichInvoiceItemForPhase2(record, updated, index);
+  });
+}
+
+function handlePhase2ResultInput(event) {
+  const row = event.target.closest("[data-phase2-item]");
+  if (!row || pendingRecord?.type !== "supplier_invoice") return;
+  const index = Number(row.dataset.phase2Item);
+  const item = pendingRecord.items?.[index];
+  if (!item) return;
+  const brand = row.querySelector("[data-phase2-field='brand']")?.value?.trim() || "";
+  const standardName = row.querySelector("[data-phase2-field='standardName']")?.value?.trim() || item.standardName || item.product;
+  const quantity = Number(row.querySelector("[data-phase2-field='quantity']")?.value || 0);
+  const lineTotalCost = toMoney(row.querySelector("[data-phase2-field='lineTotalCost']")?.value || 0);
+  const unitCost = quantity ? toMoney(lineTotalCost / quantity) : 0;
+  const generatedName = generateLoyverseProductName({
+    brand,
+    standardName,
+    lineTotalCost,
+    quantity,
+    invoiceDate: pendingRecord.date
+  });
+  const namePreview = row.querySelector("[data-phase2-generated-name]");
+  const unitPreview = row.querySelector("[data-phase2-unit-cost]");
+  if (namePreview) namePreview.textContent = generatedName;
+  if (unitPreview) unitPreview.textContent = formatRecordMoney(pendingRecord, unitCost);
 }
 
 function tabForSavedRecord(record) {
@@ -2597,11 +3124,388 @@ function duplicateNotice(section, detail) {
   };
 }
 
+function prepareInvoiceProductMatches(invoice) {
+  if (invoice.type !== "supplier_invoice") return invoice;
+  const enrichedItems = (invoice.items || []).map((item, index) => enrichInvoiceItemForPhase2(invoice, item, index));
+  return {
+    ...invoice,
+    items: ensureUniqueInvoiceInternalSkus(enrichedItems)
+  };
+}
+
+function enrichInvoiceItemForPhase2(invoice, item, index) {
+  const originalProductName = item.originalProductName || item.originalProduct || item.product || `Product ${index + 1}`;
+  const renamedProduct = renameProduct(item.product || originalProductName);
+  const standardName = item.standardName || renamedProduct;
+  const quantity = Number(item.quantity ?? item.qty ?? 0);
+  const lineTotalCost = toMoney(item.lineTotalCost ?? item.total ?? (quantity * Number(item.unitCost ?? item.unitPrice ?? 0)));
+  const unitCost = quantity ? toMoney(lineTotalCost / quantity) : toMoney(item.unitCost ?? item.unitPrice ?? 0);
+  const supplierName = invoice.supplier || "Unknown Supplier";
+  const supplierProductCode = item.supplierProductCode || item.code || "";
+  const brand = item.brand || inferBrand(standardName);
+  const size = item.size || inferSize(originalProductName);
+  const packSize = item.packSize || (quantity ? String(quantity) : "");
+  const mapping = findSupplierProductMapping({
+    supplierName,
+    originalProductName,
+    standardName,
+    supplierProductCode,
+    barcode: item.barcode || ""
+  });
+  const internalProductId = item.internalProductId || mapping?.internalProductId || centralProductId({
+    supplierName,
+    standardName,
+    brand,
+    size,
+    supplierProductCode,
+    barcode: item.barcode || ""
+  });
+  const internalSku = item.internalSku || mapping?.internalSku || ensureInternalSku(internalProductId);
+  const generatedLoyverseName = generateLoyverseProductName({
+    brand,
+    standardName,
+    lineTotalCost,
+    quantity,
+    invoiceDate: invoice.date
+  });
+  const candidates = findMockLoyverseCandidates({
+    ...item,
+    originalProductName,
+    standardName,
+    brand,
+    size,
+    packSize,
+    supplierName,
+    supplierProductCode,
+    barcode: item.barcode || "",
+    internalProductId,
+    generatedLoyverseName
+  });
+  const selectedCandidateId = item.selectedCandidateId || defaultCandidateId(candidates, supplierName);
+  return {
+    ...item,
+    originalProductName,
+    product: standardName,
+    brand,
+    standardName,
+    size,
+    packSize,
+    barcode: item.barcode || "",
+    supplierProductCode,
+    qty: quantity,
+    quantity,
+    lineTotalCost,
+    unitCost,
+    unitPrice: unitCost,
+    total: lineTotalCost,
+    currency: invoice.currency || item.currency || "MYR",
+    internalProductId,
+    internalSku,
+    generatedLoyverseName,
+    matchCandidates: candidates,
+    selectedCandidateId,
+    phase2Action: item.phase2Action || (selectedCandidateId ? "match_existing" : "unmatched"),
+    bigsellerSku: item.bigsellerSku || "",
+    woocommerceSku: item.woocommerceSku || ""
+  };
+}
+
+function inferBrand(productName) {
+  const value = String(productName || "").trim();
+  if (!value) return "";
+  const parts = value.split(/\s+/);
+  if (parts.length > 1 && parts[0].length <= 12) return parts[0];
+  const chinesePrefix = value.match(/^([\u4e00-\u9fff]{1,4})/);
+  return chinesePrefix ? chinesePrefix[1] : "";
+}
+
+function inferSize(productName) {
+  const match = String(productName || "").match(/\b\d+(?:\.\d+)?\s*(?:ml|l|g|kg|pcs|pc|瓶|包|箱|ctn|bag|jar|jars)\b/i);
+  return match ? match[0] : "";
+}
+
+function findSupplierProductMapping({ supplierName, originalProductName, standardName, supplierProductCode, barcode }) {
+  const supplier = supplierId(supplierName);
+  const normalizedNames = new Set([
+    normalizeSearch(originalProductName),
+    normalizeSearch(standardName)
+  ]);
+  return (state.supplierProductMappings || []).find((mapping) => {
+    const sameSupplier = !mapping.supplierId || mapping.supplierId === supplier;
+    const sameBarcode = barcode && mapping.barcode && normalizeSearch(mapping.barcode) === normalizeSearch(barcode);
+    const sameCode = supplierProductCode && mapping.supplierProductCode && normalizeSearch(mapping.supplierProductCode) === normalizeSearch(supplierProductCode);
+    const sameName = normalizedNames.has(mapping.normalizedInvoiceProductName);
+    return sameSupplier && (sameBarcode || sameCode || sameName);
+  }) || null;
+}
+
+function centralProductId({ supplierName, standardName, brand, size, supplierProductCode, barcode }) {
+  if (barcode) return scopedRecordId(`product-barcode-${barcode}`);
+  if (supplierProductCode) return scopedRecordId(`product-code-${supplierName}-${supplierProductCode}`);
+  return scopedRecordId(`product-${supplierName}-${brand}-${standardName}-${size}`);
+}
+
+function ensureInternalSku(internalProductId) {
+  const existing = state.products?.[internalProductId]?.internalSku;
+  if (existing) return existing;
+  return nextInternalSku();
+}
+
+function nextInternalSku() {
+  const used = new Set(Object.values(state.products || {}).map((product) => product.internalSku).filter(Boolean));
+  (state.supplierProductMappings || []).forEach((mapping) => {
+    if (mapping.internalSku) used.add(mapping.internalSku);
+  });
+  let max = 0;
+  used.forEach((sku) => {
+    const match = String(sku).match(/^SF-(\d{6})$/);
+    if (match) max = Math.max(max, Number(match[1]));
+  });
+  let next = max + 1;
+  let sku = `SF-${String(next).padStart(6, "0")}`;
+  while (used.has(sku)) {
+    next += 1;
+    sku = `SF-${String(next).padStart(6, "0")}`;
+  }
+  return sku;
+}
+
+function ensureUniqueInvoiceInternalSkus(items) {
+  const used = new Set(Object.values(state.products || {}).map((product) => product.internalSku).filter(Boolean));
+  const maxFromState = [...used].reduce((max, sku) => {
+    const match = String(sku).match(/^SF-(\d{6})$/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  let next = maxFromState + 1;
+  return items.map((item) => {
+    let internalSku = item.internalSku;
+    if (!internalSku || used.has(internalSku)) {
+      do {
+        internalSku = `SF-${String(next).padStart(6, "0")}`;
+        next += 1;
+      } while (used.has(internalSku));
+    }
+    used.add(internalSku);
+    return { ...item, internalSku };
+  });
+}
+
+function findMockLoyverseCandidates(item) {
+  const candidates = (state.mockLoyverseCatalog || []).map((mock) => {
+    const scoreResult = scoreMockCandidate(item, mock);
+    return {
+      id: mock.id,
+      mockLoyverseItemId: mock.mockLoyverseItemId,
+      mockLoyverseVariantId: mock.mockLoyverseVariantId,
+      loyverseName: mock.productName,
+      sku: mock.sku || "",
+      barcode: mock.barcode || "",
+      supplier: mock.supplier || "",
+      matchScore: scoreResult.score,
+      matchReason: scoreResult.reason,
+      generatedName: item.generatedLoyverseName
+    };
+  }).filter((candidate) => candidate.matchScore > 0);
+
+  const mappedCandidate = supplierMappingCandidate(item);
+  if (mappedCandidate) candidates.push(mappedCandidate);
+
+  return candidates
+    .sort((a, b) => b.matchScore - a.matchScore)
+    .slice(0, 6);
+}
+
+function supplierMappingCandidate(item) {
+  const mapping = findSupplierProductMapping(item);
+  if (!mapping?.loyverseItemId && !mapping?.loyverseVariantId) return null;
+  return {
+    id: `mapping-${mapping.id}`,
+    mockLoyverseItemId: mapping.loyverseItemId,
+    mockLoyverseVariantId: mapping.loyverseVariantId,
+    loyverseName: state.products?.[mapping.internalProductId]?.standardName || mapping.normalizedInvoiceProductName,
+    sku: mapping.loyverseSku || "",
+    barcode: mapping.barcode || "",
+    supplier: item.supplierName || "",
+    matchScore: 88,
+    matchReason: "已保存映射",
+    generatedName: item.generatedLoyverseName
+  };
+}
+
+function scoreMockCandidate(item, mock) {
+  if (item.barcode && mock.barcode && normalizeSearch(item.barcode) === normalizeSearch(mock.barcode)) return { score: 100, reason: "Barcode完全匹配" };
+  if (item.loyverseSku && mock.sku && normalizeSearch(item.loyverseSku) === normalizeSearch(mock.sku)) return { score: 95, reason: "Loyverse SKU匹配" };
+  if (item.supplierProductCode && mock.supplierProductCode && normalizeSearch(item.supplierProductCode) === normalizeSearch(mock.supplierProductCode)) return { score: 90, reason: "Supplier Product Code匹配" };
+  const invoiceText = normalizeSearch(`${item.brand} ${item.standardName} ${item.size}`);
+  const mockText = normalizeSearch(`${mock.productName} ${mock.supplier || ""}`);
+  const supplierBonus = item.supplierName && mock.supplier && supplierNamesMatch(item.supplierName, mock.supplier) ? 8 : 0;
+  const brandMatch = item.brand && mockText.includes(normalizeSearch(item.brand));
+  const nameScore = fuzzyNameScore(invoiceText, mockText);
+  if (brandMatch && nameScore >= 45) return { score: Math.min(85, nameScore + 15 + supplierBonus), reason: "Brand + Product Title + Size" };
+  if (nameScore >= 35) return { score: Math.min(78, nameScore + supplierBonus), reason: "AI模糊匹配(Mock)" };
+  return { score: 0, reason: "" };
+}
+
+function fuzzyNameScore(a, b) {
+  const source = normalizeSearch(a);
+  const target = normalizeSearch(b);
+  if (!source || !target) return 0;
+  if (source === target) return 82;
+  if (source.includes(target) || target.includes(source)) return 74;
+  const tokens = [...new Set(source.split(/\s+/).filter((token) => token.length > 1))];
+  if (!tokens.length) return 0;
+  const matched = tokens.filter((token) => target.includes(token)).length;
+  return Math.round((matched / tokens.length) * 70);
+}
+
+function supplierNamesMatch(a, b) {
+  const left = normalizeSearch(a);
+  const right = normalizeSearch(b);
+  return left && right && (left.includes(right) || right.includes(left));
+}
+
+function defaultCandidateId(candidates, supplierName) {
+  if (!candidates.length) return "";
+  const sameSupplier = candidates.find((candidate) => supplierNamesMatch(candidate.supplier, supplierName));
+  return (sameSupplier || candidates[0]).id;
+}
+
+function generateLoyverseProductName({ brand, standardName, lineTotalCost, quantity, invoiceDate }) {
+  const name = [brand, standardName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  return `${name || "Unknown Product"}（${formatCompactNumber(lineTotalCost)}/${formatCompactNumber(quantity)}）${formatDateDDMMYYYY(invoiceDate)}`;
+}
+
+function formatCompactNumber(value) {
+  const number = Number(value || 0);
+  if (Number.isInteger(number)) return String(number);
+  return String(toMoney(number)).replace(/\.?0+$/, "");
+}
+
+function formatDateDDMMYYYY(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return "";
+  return `${pad(date.getDate())}${pad(date.getMonth() + 1)}${date.getFullYear()}`;
+}
+
+function recordPhase2InvoiceProducts(invoice) {
+  invoice.items = (invoice.items || []).map((item, index) => {
+    const enriched = enrichInvoiceItemForPhase2(invoice, item, index);
+    upsertCentralProduct(enriched, invoice);
+    upsertCostHistory(enriched, invoice, index);
+    upsertProductMatchReview(enriched, invoice, index);
+    return enriched;
+  });
+}
+
+function upsertCentralProduct(item, invoice) {
+  if (!item.internalProductId) return;
+  const existing = state.products[item.internalProductId] || {};
+  state.products[item.internalProductId] = {
+    ...existing,
+    internalProductId: item.internalProductId,
+    internalSku: item.internalSku || existing.internalSku || nextInternalSku(),
+    standardName: item.standardName || item.product || existing.standardName || "Unknown Product",
+    brand: item.brand || existing.brand || "",
+    size: item.size || existing.size || "",
+    packSize: item.packSize || existing.packSize || "",
+    barcode: item.barcode || existing.barcode || "",
+    supplierProductCode: item.supplierProductCode || existing.supplierProductCode || "",
+    supplierId: supplierId(invoice.supplier),
+    supplierName: invoice.supplier || "Unknown Supplier",
+    createdAt: existing.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function upsertCostHistory(item, invoice, index) {
+  const id = scopedRecordId(`cost-${invoice.id}-${index}-${item.internalProductId}`);
+  const existingIndex = state.productCostHistory.findIndex((entry) => entry.id === id);
+  const entry = {
+    id,
+    internalProductId: item.internalProductId,
+    supplierId: supplierId(invoice.supplier),
+    supplierName: invoice.supplier || "Unknown Supplier",
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNo || "",
+    invoiceDate: invoice.date || "",
+    invoiceDate: invoice.date || "",
+    originalProductName: item.originalProductName || item.product || "",
+    brand: item.brand || "",
+    standardName: item.standardName || item.product || "",
+    size: item.size || "",
+    packSize: item.packSize || "",
+    barcode: item.barcode || "",
+    supplierProductCode: item.supplierProductCode || "",
+    lineTotalCost: toMoney(item.lineTotalCost || item.total || 0),
+    quantity: Number(item.quantity || item.qty || 0),
+    unitCost: toMoney(item.unitCost || item.unitPrice || 0),
+    currency: invoice.currency || item.currency || "MYR",
+    receiptImages: invoice.receiptImages || [],
+    uploadedBy: authSession?.user?.id || null,
+    confirmedBy: canAccessHeadOffice() ? authSession?.user?.id || null : null,
+    createdAt: new Date().toISOString()
+  };
+  if (existingIndex >= 0) state.productCostHistory[existingIndex] = { ...state.productCostHistory[existingIndex], ...entry };
+  else state.productCostHistory.push(entry);
+}
+
+function upsertProductMatchReview(item, invoice, index) {
+  const selected = (item.matchCandidates || []).find((candidate) => candidate.id === item.selectedCandidateId) || null;
+  const id = scopedRecordId(`product-review-${invoice.id}-${index}`);
+  const existingIndex = state.productMatchReviews.findIndex((review) => review.id === id);
+  const isDraft = item.phase2Action === "create_loyverse_draft";
+  const review = {
+    id,
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNo || "",
+    supplierId: supplierId(invoice.supplier),
+    supplierName: invoice.supplier || "Unknown Supplier",
+    reviewStatus: "pending_owner_review",
+    originalProductName: item.originalProductName || item.product || "",
+    brand: item.brand || "",
+    standardName: item.standardName || item.product || "",
+    size: item.size || "",
+    packSize: item.packSize || "",
+    barcode: item.barcode || "",
+    supplierProductCode: item.supplierProductCode || "",
+    quantity: Number(item.quantity || item.qty || 0),
+    lineTotalCost: toMoney(item.lineTotalCost || item.total || 0),
+    unitCost: toMoney(item.unitCost || item.unitPrice || 0),
+    currency: invoice.currency || item.currency || "MYR",
+    internalProductId: item.internalProductId || "",
+    internalSku: item.internalSku || "",
+    selectedCandidateId: item.selectedCandidateId || "",
+    matchScore: selected?.matchScore || 0,
+    matchReason: selected?.matchReason || (isDraft ? "新增Loyverse产品草稿" : "等待人工确认"),
+    generatedProductName: item.generatedLoyverseName || "",
+    loyverseItemId: selected?.mockLoyverseItemId || "",
+    loyverseVariantId: selected?.mockLoyverseVariantId || "",
+    loyverseSku: selected?.sku || "",
+    bigsellerSku: item.bigsellerSku || "",
+    woocommerceSku: item.woocommerceSku || "",
+    isNewLoyverseProduct: isDraft,
+    submittedBy: authSession?.user?.id || null,
+    submittedAt: new Date().toISOString(),
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewNote: "",
+    mockSyncStatus: "",
+    mockSyncResponse: null,
+    errorMessage: "",
+    candidates: item.matchCandidates || [],
+    receiptImages: invoice.receiptImages || [],
+    phase2Action: item.phase2Action || "match_existing"
+  };
+  if (existingIndex >= 0) state.productMatchReviews[existingIndex] = { ...state.productMatchReviews[existingIndex], ...review };
+  else state.productMatchReviews.push(review);
+}
+
 function recordParsedDocument(parsed) {
   const createdAt = parsed.createdAt || new Date().toISOString();
   if (parsed.type === "settlement_statement") {
-    const invoice = { ...settlementToInvoice(parsed), createdAt };
+    const invoice = prepareInvoiceProductMatches({ ...settlementToInvoice(parsed), createdAt });
     state.invoices.push(invoice);
+    recordPhase2InvoiceProducts(invoice);
     claimPendingPaymentsForInvoice(invoice);
     return;
   }
@@ -2610,8 +3514,9 @@ function recordParsedDocument(parsed) {
     state.incomes.push(income);
   }
   if (parsed.type === "supplier_invoice") {
-    const invoice = applyRenameRulesToInvoice({ ...parsed, id: crypto.randomUUID(), createdAt });
+    const invoice = prepareInvoiceProductMatches(applyRenameRulesToInvoice({ ...parsed, id: crypto.randomUUID(), createdAt }));
     state.invoices.push(invoice);
+    recordPhase2InvoiceProducts(invoice);
     updateInventoryFromInvoice(invoice);
     claimPendingPaymentsForInvoice(invoice);
   }
@@ -2622,8 +3527,9 @@ function recordParsedDocument(parsed) {
     applyExpenseBatchDestinations(parsed);
     parsed.expenses.forEach((expense) => {
       if (expense.destination === "materials") {
-        const invoice = { ...expenseToMaterialInvoice(expense), createdAt };
+        const invoice = prepareInvoiceProductMatches({ ...expenseToMaterialInvoice(expense), createdAt });
         state.invoices.push(invoice);
+        recordPhase2InvoiceProducts(invoice);
         updateInventoryFromInvoice(invoice);
         claimPendingPaymentsForInvoice(invoice);
       } else if (expense.destination === "touchngo") {
@@ -2805,6 +3711,68 @@ function fixKnownUnknownSuppliers() {
   });
 }
 
+function migrateExistingInventoryToCatalog() {
+  Object.entries(state.inventory || {}).forEach(([key, item]) => {
+    const supplierName = item.supplier || "Unknown Supplier";
+    const standardName = item.product || "Unknown Product";
+    const internalProductId = item.internalProductId || centralProductId({
+      supplierName,
+      standardName,
+      brand: item.brand || "",
+      size: item.size || "",
+      supplierProductCode: item.supplierProductCode || "",
+      barcode: item.barcode || ""
+    });
+    const internalSku = item.internalSku || state.products?.[internalProductId]?.internalSku || nextInternalSku();
+    item.internalProductId = internalProductId;
+    item.internalSku = internalSku;
+    item.platformMatchStatus = item.platformMatchStatus || "待确认";
+    state.products[internalProductId] = {
+      ...(state.products[internalProductId] || {}),
+      internalProductId,
+      internalSku,
+      standardName,
+      brand: item.brand || state.products[internalProductId]?.brand || "",
+      size: item.size || state.products[internalProductId]?.size || "",
+      packSize: item.packSize || state.products[internalProductId]?.packSize || "",
+      barcode: item.barcode || state.products[internalProductId]?.barcode || "",
+      supplierProductCode: item.supplierProductCode || state.products[internalProductId]?.supplierProductCode || "",
+      supplierId: supplierId(supplierName),
+      supplierName,
+      createdAt: state.products[internalProductId]?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    (item.history || []).forEach((entry, index) => {
+      const historyId = scopedRecordId(`cost-migrated-${key}-${entry.invoiceNo || index}-${entry.date || item.invoiceDate}`);
+      if (state.productCostHistory.some((history) => history.id === historyId)) return;
+      state.productCostHistory.push({
+        id: historyId,
+        internalProductId,
+        supplierId: supplierId(entry.supplier || supplierName),
+        supplierName: entry.supplier || supplierName,
+        invoiceId: "",
+        invoiceNumber: entry.invoiceNo || "",
+        invoiceDate: entry.date || item.invoiceDate || "",
+        originalProductName: standardName,
+        brand: item.brand || "",
+        standardName,
+        size: item.size || "",
+        packSize: item.packSize || "",
+        barcode: item.barcode || "",
+        supplierProductCode: item.supplierProductCode || "",
+        lineTotalCost: toMoney(entry.lineTotalCost || entry.total || 0),
+        quantity: Number(entry.quantity || entry.qty || 0),
+        unitCost: toMoney(entry.unitCost || entry.unitPrice || item.latestCost || 0),
+        currency: entry.currency || item.currency || "MYR",
+        receiptImages: [],
+        uploadedBy: null,
+        confirmedBy: null,
+        createdAt: new Date().toISOString()
+      });
+    });
+  });
+}
+
 function applyPayment(payment) {
   const stored = { ...payment, id: crypto.randomUUID() };
   const invoice = payment.matchedInvoiceId
@@ -2869,17 +3837,25 @@ function invoiceRemainingByCurrency(invoices) {
 }
 
 function updateInventoryFromInvoice(invoice) {
-  invoice.items.forEach((item) => {
+  invoice.items.forEach((rawItem, index) => {
+    const item = enrichInvoiceItemForPhase2(invoice, rawItem, index);
     const key = inventoryKey(`${item.product}__${invoice.supplier || "Unknown Supplier"}`);
     const existing = state.inventory[key];
     const historyEntry = {
       date: invoice.date,
       invoiceNo: invoice.invoiceNo,
       supplier: invoice.supplier || "Unknown Supplier",
-      qty: Number(item.qty || 0),
-      unitPrice: toMoney(item.unitPrice),
-      total: toMoney(item.total),
-      currency: invoice.currency || item.currency || "MYR"
+      qty: Number(item.quantity || item.qty || 0),
+      quantity: Number(item.quantity || item.qty || 0),
+      unitPrice: toMoney(item.unitCost || item.unitPrice),
+      unitCost: toMoney(item.unitCost || item.unitPrice),
+      lineTotalCost: toMoney(item.lineTotalCost || item.total),
+      total: toMoney(item.lineTotalCost || item.total),
+      currency: invoice.currency || item.currency || "MYR",
+      internalProductId: item.internalProductId,
+      internalSku: item.internalSku,
+      generatedLoyverseName: item.generatedLoyverseName,
+      platformMatchStatus: productPlatformMatchStatus(item)
     };
     const history = [
       ...(existing?.history || []),
@@ -2888,16 +3864,31 @@ function updateInventoryFromInvoice(invoice) {
     if (!existing || new Date(invoice.date) >= new Date(existing.invoiceDate)) {
       state.inventory[key] = {
         product: item.product,
-        latestCost: item.unitPrice,
+        latestCost: item.unitCost || item.unitPrice,
+        latestPackCost: item.lineTotalCost || item.total,
+        latestQuantity: item.quantity || item.qty,
         currency: invoice.currency || item.currency || "MYR",
         invoiceDate: invoice.date,
         supplier: invoice.supplier,
+        internalProductId: item.internalProductId,
+        internalSku: item.internalSku,
+        generatedLoyverseName: item.generatedLoyverseName,
+        platformMatchStatus: productPlatformMatchStatus(item),
         history
       };
     } else {
       existing.history = history;
+      existing.internalProductId = existing.internalProductId || item.internalProductId;
+      existing.internalSku = existing.internalSku || item.internalSku;
+      existing.platformMatchStatus = existing.platformMatchStatus || productPlatformMatchStatus(item);
     }
   });
+}
+
+function productPlatformMatchStatus(item) {
+  if (item.phase2Action === "create_loyverse_draft") return "新增Mock草稿";
+  if (item.selectedCandidateId) return "已匹配Mock";
+  return "待确认";
 }
 
 function handleCostCalculatorInput(event) {
@@ -3277,6 +4268,10 @@ function renderTables() {
   const matchedPayments = paymentsWithInvoices.filter(({ invoice }) => invoice);
   els.pendingPaymentRows.innerHTML = rowsOrEmpty(waitingPayments.map(renderPendingPaymentRow), 7);
   els.matchedPaymentRows.innerHTML = rowsOrEmpty(matchedPayments.map(renderPaymentRow), 5);
+  els.productReviewRows.innerHTML = rowsOrEmpty((state.productMatchReviews || [])
+    .filter((review) => review.reviewStatus === "pending_owner_review" || review.reviewStatus === "needs_revision")
+    .sort((a, b) => dateValue(b.submittedAt) - dateValue(a.submittedAt))
+    .map(renderProductReviewRow), 8);
 
   const inventoryItems = Object.entries(state.inventory);
   const inventoryQuery = normalizeSearch(els.inventorySearch.value);
@@ -3304,25 +4299,27 @@ function renderTables() {
         </td>
         <td>${item.invoiceDate}</td>
         <td>${escapeHtml(item.supplier)}</td>
+        <td><span class="chip">${escapeHtml(item.platformMatchStatus || "待确认")}</span></td>
       </tr>`;
-  }), 5);
+  }), 6);
 }
 
 function renderInventoryProductCell(item) {
-  const history = Array.isArray(item.history) ? item.history : [];
+  const centralHistory = (state.productCostHistory || []).filter((entry) => entry.internalProductId && entry.internalProductId === item.internalProductId);
+  const history = centralHistory.length ? centralHistory : (Array.isArray(item.history) ? item.history : []);
   if (!history.length) return escapeHtml(item.product);
   const rows = history.map((entry) => `
     <tr>
-      <td>${escapeHtml(entry.date || "-")}</td>
-      <td>${escapeHtml(entry.invoiceNo || "-")}</td>
-      <td>${escapeHtml(entry.supplier || item.supplier || "-")}</td>
-      <td>${Number(entry.qty || 0)}</td>
-      <td class="money">${formatRecordMoney(entry, entry.unitPrice)}</td>
-      <td class="money">${formatRecordMoney(entry, entry.total)}</td>
+      <td>${escapeHtml(entry.invoiceDate || entry.date || "-")}</td>
+      <td>${escapeHtml(entry.invoiceNumber || entry.invoiceNo || "-")}</td>
+      <td>${escapeHtml(entry.supplierName || entry.supplier || item.supplier || "-")}</td>
+      <td>${Number(entry.quantity || entry.qty || 0)}</td>
+      <td class="money">${formatRecordMoney(entry, entry.unitCost || entry.unitPrice)}</td>
+      <td class="money">${formatRecordMoney(entry, entry.lineTotalCost || entry.total)}</td>
     </tr>`).join("");
   return `
     <details class="inventory-history">
-      <summary>${escapeHtml(item.product)}</summary>
+      <summary>${escapeHtml(item.product)} <small>${escapeHtml(item.internalSku || "")}</small></summary>
       <div class="nested-table-wrap">
         <table>
           <thead><tr><th>来货日期</th><th>Invoice</th><th>Supplier</th><th>数量</th><th>当时成本</th><th>金额</th></tr></thead>
@@ -3333,7 +4330,203 @@ function renderInventoryProductCell(item) {
 }
 
 function inventoryHistorySearchText(item) {
-  return (item.history || []).map((entry) => `${entry.date || ""} ${entry.invoiceNo || ""} ${entry.supplier || ""}`).join(" ");
+  return [
+    ...(item.history || []),
+    ...(state.productCostHistory || []).filter((entry) => entry.internalProductId === item.internalProductId)
+  ].map((entry) => `${entry.invoiceDate || entry.date || ""} ${entry.invoiceNumber || entry.invoiceNo || ""} ${entry.supplierName || entry.supplier || ""} ${entry.internalSku || ""}`).join(" ");
+}
+
+function renderProductReviewRow(review) {
+  const candidate = (review.candidates || []).find((item) => item.id === review.selectedCandidateId) || null;
+  const isDraft = review.phase2Action === "create_loyverse_draft" || review.isNewLoyverseProduct;
+  return `
+    <tr>
+      <td>${escapeHtml(formatCreatedAt(review.submittedAt))}</td>
+      <td>${escapeHtml(review.invoiceNumber || "-")}<br><small>${escapeHtml(review.supplierName || "-")}</small></td>
+      <td>
+        <strong>${escapeHtml(review.standardName || review.originalProductName || "-")}</strong>
+        <small>${escapeHtml(review.brand || "Brand未设定")} · ${escapeHtml(review.size || "Size未设定")} · ${escapeHtml(review.internalSku || "无Internal SKU")}</small>
+      </td>
+      <td>${escapeHtml(formatCompactNumber(review.lineTotalCost))}/${escapeHtml(formatCompactNumber(review.quantity))}<br><strong>${formatRecordMoney(review, review.unitCost)}</strong></td>
+      <td>${isDraft ? "新增 Loyverse 草稿" : escapeHtml(candidate?.loyverseName || "暂未匹配")}<br><small>${escapeHtml(review.matchReason || candidate?.matchReason || "-")}</small></td>
+      <td>${escapeHtml(review.generatedProductName || "-")}</td>
+      <td><span class="chip">${escapeHtml(productReviewStatusLabel(review.reviewStatus))}</span></td>
+      <td>
+        <div class="review-action-grid">
+          <button class="secondary-btn small" data-review-action="return" data-review-id="${escapeHtml(review.id)}" type="button">退回修改</button>
+          <button class="secondary-btn small" data-review-action="inventory_only" data-review-id="${escapeHtml(review.id)}" type="button">只保存Inventory</button>
+          <button class="secondary-btn small" data-review-action="confirm_mapping" data-review-id="${escapeHtml(review.id)}" type="button">确认产品映射</button>
+          <button class="secondary-btn small" data-review-action="mock_update" data-review-id="${escapeHtml(review.id)}" type="button">模拟更新现有Loyverse</button>
+          <button class="secondary-btn small" data-review-action="mock_create" data-review-id="${escapeHtml(review.id)}" type="button">模拟新增Loyverse</button>
+        </div>
+      </td>
+    </tr>`;
+}
+
+function productReviewStatusLabel(status) {
+  return ({
+    pending_owner_review: "待Owner审核",
+    needs_revision: "退回修改",
+    approved_inventory_only: "只保存Inventory",
+    approved_mapping: "已确认映射",
+    approved_mock_update: "已Mock更新",
+    approved_mock_create: "已Mock新增",
+    rejected: "已拒绝"
+  })[status] || status || "待Owner审核";
+}
+
+async function handleProductReviewAction(event) {
+  const button = event.target.closest("[data-review-action]");
+  if (!button) return;
+  if (!canAccessHeadOffice()) {
+    els.uploadStatus.textContent = "只有 owner 可以审核产品匹配。";
+    els.uploadStatus.className = "upload-status warning";
+    return;
+  }
+  const review = state.productMatchReviews.find((item) => item.id === button.dataset.reviewId);
+  if (!review) return;
+  const action = button.dataset.reviewAction;
+  const reviewedAt = new Date().toISOString();
+  review.reviewedBy = authSession?.user?.id || null;
+  review.reviewedAt = reviewedAt;
+  if (action === "return") {
+    review.reviewStatus = "needs_revision";
+    review.reviewNote = "Owner退回修改";
+  }
+  if (action === "inventory_only") {
+    review.reviewStatus = "approved_inventory_only";
+    review.reviewNote = "Owner选择只保存Inventory，不更新Mock Loyverse。";
+  }
+  if (action === "confirm_mapping") {
+    review.reviewStatus = "approved_mapping";
+    saveConfirmedSupplierProductMapping(review);
+  }
+  if (action === "mock_update") {
+    review.reviewStatus = "approved_mock_update";
+    review.mockSyncStatus = "mock_updated";
+    review.mockSyncResponse = { ok: true, mode: "mock_update", updatedAt: reviewedAt };
+    saveConfirmedSupplierProductMapping(review);
+    addMockSyncLog(review, "mock_updated");
+  }
+  if (action === "mock_create") {
+    review.reviewStatus = "approved_mock_create";
+    review.isNewLoyverseProduct = true;
+    review.mockSyncStatus = "mock_created";
+    review.mockSyncResponse = { ok: true, mode: "mock_create", updatedAt: reviewedAt };
+    createMockLoyverseProductFromReview(review);
+    saveConfirmedSupplierProductMapping(review);
+    addMockSyncLog(review, "mock_created");
+  }
+  const saved = await saveState();
+  render();
+  els.uploadStatus.textContent = saved ? "产品审核结果已保存。" : `产品审核保存失败：${lastSupabaseSaveError || "请检查 Supabase migration。"}`;
+  els.uploadStatus.className = saved ? "upload-status ready" : "upload-status warning";
+}
+
+function saveConfirmedSupplierProductMapping(review) {
+  const mappingId = scopedRecordId(`supplier-map-${review.supplierId}-${normalizeSearch(review.originalProductName || review.standardName)}-${review.supplierProductCode || review.internalProductId}`);
+  const existingIndex = state.supplierProductMappings.findIndex((mapping) => mapping.id === mappingId);
+  const candidate = (review.candidates || []).find((item) => item.id === review.selectedCandidateId) || null;
+  const mapping = {
+    id: mappingId,
+    normalizedInvoiceProductName: normalizeSearch(review.originalProductName || review.standardName),
+    supplierId: review.supplierId || supplierId(review.supplierName),
+    supplierProductCode: review.supplierProductCode || "",
+    internalProductId: review.internalProductId,
+    internalSku: review.internalSku,
+    loyverseItemId: review.loyverseItemId || candidate?.mockLoyverseItemId || "",
+    loyverseVariantId: review.loyverseVariantId || candidate?.mockLoyverseVariantId || "",
+    loyverseSku: review.loyverseSku || candidate?.sku || "",
+    bigsellerSku: review.bigsellerSku || "",
+    woocommerceSku: review.woocommerceSku || "",
+    barcode: review.barcode || candidate?.barcode || "",
+    confirmedBy: authSession?.user?.id || null,
+    confirmedAt: new Date().toISOString()
+  };
+  if (existingIndex >= 0) state.supplierProductMappings[existingIndex] = { ...state.supplierProductMappings[existingIndex], ...mapping };
+  else state.supplierProductMappings.push(mapping);
+  upsertChannelMapping({
+    internalProductId: mapping.internalProductId,
+    channel: "loyverse_mock",
+    channelProductId: mapping.loyverseItemId,
+    channelVariantId: mapping.loyverseVariantId,
+    channelSku: mapping.loyverseSku,
+    barcode: mapping.barcode
+  });
+  if (mapping.bigsellerSku) {
+    upsertChannelMapping({
+      internalProductId: mapping.internalProductId,
+      channel: "bigseller",
+      channelSku: mapping.bigsellerSku,
+      barcode: mapping.barcode
+    });
+  }
+  if (mapping.woocommerceSku) {
+    upsertChannelMapping({
+      internalProductId: mapping.internalProductId,
+      channel: "woocommerce",
+      channelSku: mapping.woocommerceSku,
+      barcode: mapping.barcode
+    });
+  }
+}
+
+function upsertChannelMapping(mapping) {
+  if (!mapping.internalProductId || !mapping.channel) return;
+  const id = scopedRecordId(`channel-map-${mapping.channel}-${mapping.internalProductId}-${mapping.channelVariantId || mapping.channelSku || mapping.barcode || "default"}`);
+  const row = {
+    id,
+    internalProductId: mapping.internalProductId,
+    channel: mapping.channel,
+    channelProductId: mapping.channelProductId || "",
+    channelVariantId: mapping.channelVariantId || "",
+    channelSku: mapping.channelSku || "",
+    barcode: mapping.barcode || ""
+  };
+  const existingIndex = state.productChannelMappings.findIndex((item) => item.id === id);
+  if (existingIndex >= 0) state.productChannelMappings[existingIndex] = { ...state.productChannelMappings[existingIndex], ...row };
+  else state.productChannelMappings.push(row);
+}
+
+function createMockLoyverseProductFromReview(review) {
+  const id = `mock-draft-${review.internalProductId}`;
+  if ((state.mockLoyverseCatalog || []).some((item) => item.id === id)) return;
+  state.mockLoyverseCatalog.push({
+    id,
+    mockLoyverseItemId: `mock-item-${review.internalSku}`,
+    mockLoyverseVariantId: `mock-var-${review.internalSku}`,
+    productName: review.generatedProductName || review.standardName,
+    sku: "",
+    barcode: review.barcode || "",
+    supplier: review.supplierName || "",
+    status: "approved_mock_create"
+  });
+  review.loyverseItemId = `mock-item-${review.internalSku}`;
+  review.loyverseVariantId = `mock-var-${review.internalSku}`;
+}
+
+function addMockSyncLog(review, status) {
+  state.channelSyncLogs.push({
+    id: scopedRecordId(`sync-log-${review.id}-${Date.now()}`),
+    internalProductId: review.internalProductId,
+    reviewId: review.id,
+    channel: "loyverse_mock",
+    syncStatus: status,
+    updatedBy: authSession?.user?.id || null,
+    updatedAt: new Date().toISOString(),
+    oldValue: {
+      loyverseName: (review.candidates || []).find((item) => item.id === review.selectedCandidateId)?.loyverseName || null,
+      unitCost: null
+    },
+    newValue: {
+      loyverseName: review.generatedProductName,
+      unitCost: review.unitCost,
+      supplier: review.supplierName,
+      invoiceDate: review.invoiceDate
+    },
+    apiResponse: { ok: true, mocked: true },
+    errorMessage: ""
+  });
 }
 
 function renderResult(parsed) {
@@ -3352,6 +4545,12 @@ function renderResult(parsed) {
     renderTransactionBatchResult(parsed);
     return;
   }
+  if (parsed.type === "supplier_invoice") {
+    const enriched = prepareInvoiceProductMatches(parsed);
+    if (pendingRecord?.type === "supplier_invoice") pendingRecord.items = enriched.items;
+    renderSupplierInvoiceResult(enriched);
+    return;
+  }
   const fields = Object.entries(parsed)
     .filter(([key]) => !["items", "type", "id", "matchedInvoiceId", "receiptImage", "receiptImages"].includes(key))
     .filter(([key]) => !(key === "receiptFileName" && Array.isArray(parsed.receiptFileNames) && parsed.receiptFileNames.length))
@@ -3361,6 +4560,86 @@ function renderResult(parsed) {
     ? `<div class="line-items"><h3>产品明细</h3><div class="table-wrap"><table><thead><tr><th>产品</th><th>数量</th><th>单价</th><th>总额</th></tr></thead><tbody>${parsed.items.map((item) => `<tr><td>${escapeHtml(item.product)}</td><td>${item.qty}</td><td>${formatRecordMoney(parsed, item.unitPrice)}</td><td>${formatRecordMoney(parsed, item.total)}</td></tr>`).join("")}</tbody></table></div></div>`
     : "";
   els.resultBox.innerHTML = `<div class="summary-grid">${fields}</div>${items}`;
+}
+
+function renderSupplierInvoiceResult(parsed) {
+  const fields = Object.entries(parsed)
+    .filter(([key]) => !["items", "type", "id", "matchedInvoiceId", "receiptImage", "receiptImages", "matchCandidates"].includes(key))
+    .filter(([key]) => !(key === "receiptFileName" && Array.isArray(parsed.receiptFileNames) && parsed.receiptFileNames.length))
+    .map(([key, value]) => `<div class="summary-item"><span>${fieldLabel(key)}</span><strong>${formatValue(key, value, parsed)}</strong></div>`)
+    .join("");
+  const rows = parsed.items?.length
+    ? parsed.items.map((item, index) => renderPhase2InvoiceItem(item, index, parsed)).join("")
+    : `<tr><td colspan="8">暂无产品明细</td></tr>`;
+  els.resultBox.innerHTML = `
+    <div class="summary-grid">${fields}</div>
+    <div class="line-items">
+      <h3>产品明细和 Loyverse Mock 匹配</h3>
+      <div class="table-wrap phase2-table-wrap">
+        <table>
+          <thead><tr><th>OCR产品</th><th>Brand / 标准名称</th><th>Size / Pack</th><th>识别码</th><th>数量</th><th>Line Total</th><th>单件成本</th><th>处理</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderPhase2InvoiceItem(item, index, invoice) {
+  const candidates = item.matchCandidates || [];
+  const selected = item.selectedCandidateId || defaultCandidateId(candidates, invoice.supplier);
+  const candidateRows = candidates.length
+    ? candidates.map((candidate) => `
+      <label class="candidate-option">
+        <input data-phase2-field="candidate" name="phase2-candidate-${index}" type="radio" value="${escapeHtml(candidate.id)}" ${candidate.id === selected ? "checked" : ""} />
+        <span>
+          <strong>${escapeHtml(candidate.loyverseName)}</strong>
+          <small>${escapeHtml(candidate.sku || "无SKU")} · ${escapeHtml(candidate.barcode || "无Barcode")} · ${escapeHtml(candidate.supplier || "Supplier未设定")}</small>
+          <small>${Number(candidate.matchScore || 0)}分 · ${escapeHtml(candidate.matchReason || "Mock候选")}</small>
+        </span>
+      </label>`).join("")
+    : `<p class="muted-copy">没有找到高分候选。可以新增 Loyverse 产品草稿，或暂时不匹配。</p>`;
+  return `
+    <tr data-phase2-item="${index}">
+      <td>
+        <strong>${escapeHtml(item.originalProductName || item.product)}</strong>
+        <small>Internal SKU：${escapeHtml(item.internalSku || "保存时自动生成")}</small>
+      </td>
+      <td>
+        <input data-phase2-field="brand" type="text" placeholder="Brand" value="${escapeHtml(item.brand || "")}" />
+        <input data-phase2-field="standardName" type="text" placeholder="标准产品名称" value="${escapeHtml(item.standardName || item.product || "")}" />
+      </td>
+      <td>
+        <input data-phase2-field="size" type="text" placeholder="Size" value="${escapeHtml(item.size || "")}" />
+        <input data-phase2-field="packSize" type="text" placeholder="Pack Size" value="${escapeHtml(item.packSize || "")}" />
+      </td>
+      <td>
+        <input data-phase2-field="supplierProductCode" type="text" placeholder="Supplier Product Code" value="${escapeHtml(item.supplierProductCode || "")}" />
+        <input data-phase2-field="barcode" type="text" placeholder="Barcode" value="${escapeHtml(item.barcode || "")}" />
+      </td>
+      <td><input data-phase2-field="quantity" type="number" min="0" step="0.01" value="${Number(item.quantity || item.qty || 0)}" /></td>
+      <td><input data-phase2-field="lineTotalCost" type="number" min="0" step="0.01" value="${Number(item.lineTotalCost || item.total || 0)}" /></td>
+      <td class="money" data-phase2-unit-cost>${formatRecordMoney(invoice, item.unitCost || item.unitPrice || 0)}</td>
+      <td>
+        <div class="phase2-match-panel">
+          <strong>建议名称：<span data-phase2-generated-name>${escapeHtml(item.generatedLoyverseName || "")}</span></strong>
+          ${candidateRows}
+          <label class="search-field">
+            <span>处理方式</span>
+            <select data-phase2-field="action">
+              <option value="match_existing" ${item.phase2Action === "match_existing" ? "selected" : ""}>选择现有 Mock 产品</option>
+              <option value="create_loyverse_draft" ${item.phase2Action === "create_loyverse_draft" ? "selected" : ""}>新增 Loyverse 产品草稿</option>
+              <option value="unmatched" ${item.phase2Action === "unmatched" ? "selected" : ""}>暂时不匹配</option>
+              <option value="none_of_above" ${item.phase2Action === "none_of_above" ? "selected" : ""}>都不是以上产品</option>
+            </select>
+          </label>
+          <div class="external-sku-grid">
+            <input data-phase2-field="bigsellerSku" type="text" placeholder="BigSeller SKU（可选）" value="${escapeHtml(item.bigsellerSku || "")}" />
+            <input data-phase2-field="woocommerceSku" type="text" placeholder="WooCommerce SKU（可选）" value="${escapeHtml(item.woocommerceSku || "")}" />
+            <input data-phase2-field="internalSku" type="text" placeholder="自定义 Internal SKU（可选）" value="${escapeHtml(item.internalSku || "")}" />
+          </div>
+        </div>
+      </td>
+    </tr>`;
 }
 
 function renderTransactionBatchResult(parsed) {
