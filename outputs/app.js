@@ -434,13 +434,13 @@ async function saveStateToSupabase() {
       await replaceSupabaseTable("suppliers", supplierRowsFromState());
       await replaceSupabaseTable("invoices", state.invoices.map(invoiceToRow));
       await replaceSupabaseTable("inventory", inventoryRowsFromState());
-      await replaceOptionalSupabaseTable("products", productRowsFromState());
-      await replaceOptionalSupabaseTable("product_channel_mappings", productChannelMappingRowsFromState());
-      await replaceOptionalSupabaseTable("supplier_product_mappings", supplierProductMappingRowsFromState());
-      await replaceOptionalSupabaseTable("product_cost_history", productCostHistoryRowsFromState());
-      await replaceOptionalSupabaseTable("mock_loyverse_catalog", mockLoyverseCatalogRowsFromState());
-      await replaceOptionalSupabaseTable("product_match_reviews", productMatchReviewRowsFromState());
-      await replaceOptionalSupabaseTable("channel_sync_logs", channelSyncLogRowsFromState());
+      await upsertOptionalSupabaseRows("products", productRowsFromState());
+      await upsertOptionalSupabaseRows("product_channel_mappings", productChannelMappingRowsFromState());
+      await upsertOptionalSupabaseRows("supplier_product_mappings", supplierProductMappingRowsFromState());
+      await upsertOptionalSupabaseRows("product_cost_history", productCostHistoryRowsFromState());
+      await upsertOptionalSupabaseRows("mock_loyverse_catalog", mockLoyverseCatalogRowsFromState());
+      await upsertOptionalSupabaseRows("product_match_reviews", productMatchReviewRowsFromState());
+      await upsertOptionalSupabaseRows("channel_sync_logs", channelSyncLogRowsFromState());
       await upsertSupabaseRows("app_state", [withUserId({ id: appStateId(), data: appStatePayload() })]);
     } else {
       await upsertSupabaseRows("suppliers", supplierRowsFromState());
@@ -925,7 +925,7 @@ function summarizeClientText(text) {
 }
 
 async function replaceSupabaseTable(table, rows) {
-  await supabaseRequest(`/${table}?id=neq.__never__`, { method: "DELETE" });
+  await supabaseRequest(`/${table}?${deleteColumnForTable(table)}=neq.__never__`, { method: "DELETE" });
   if (rows.length) await upsertSupabaseRows(table, rows);
 }
 
@@ -933,16 +933,22 @@ async function replaceOptionalSupabaseTable(table, rows) {
   try {
     await replaceSupabaseTable(table, rows);
   } catch (error) {
-    if (!isMissingPhase2TableError(error)) throw error;
+    if (!isMissingPhase2TableError(error)) throw tableOperationError(table, "replace", error);
   }
 }
 
 async function upsertSupabaseRows(table, rows) {
-  return supabaseRequest(`/${table}?on_conflict=id`, {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify(rows)
-  });
+  try {
+    const cleanRows = dedupeRowsForSupabaseTable(table, rows);
+    if (!cleanRows.length) return null;
+    return await supabaseRequest(`/${table}?on_conflict=${encodeURIComponent(conflictTargetForTable(table))}`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(cleanRows)
+    });
+  } catch (error) {
+    throw tableOperationError(table, "upsert", error);
+  }
 }
 
 async function upsertOptionalSupabaseRows(table, rows) {
@@ -951,8 +957,97 @@ async function upsertOptionalSupabaseRows(table, rows) {
     return await upsertSupabaseRows(table, rows);
   } catch (error) {
     if (isMissingPhase2TableError(error)) return null;
-    throw error;
+    throw tableOperationError(table, "upsert", error);
   }
+}
+
+function conflictTargetForTable(table) {
+  return ({
+    products: "internal_product_id"
+  })[table] || "id";
+}
+
+function deleteColumnForTable(table) {
+  return conflictTargetForTable(table);
+}
+
+function dedupeRowsForSupabaseTable(table, rows) {
+  let cleanRows = mergeDuplicateRows(rows || [], (row) => primaryConflictKey(table, row));
+  phase2SecondaryConflictKeys(table).forEach((keyFn) => {
+    cleanRows = mergeDuplicateRows(cleanRows, keyFn);
+  });
+  return cleanRows;
+}
+
+function primaryConflictKey(table, row) {
+  const target = conflictTargetForTable(table);
+  return row?.[target] ? `${target}:${row[target]}` : "";
+}
+
+function phase2SecondaryConflictKeys(table) {
+  const keyFns = {
+    products: [
+      (row) => row.user_id && row.internal_sku ? `user-internal-sku:${row.user_id}:${normalizeSearch(row.internal_sku)}` : "",
+      (row) => row.user_id && row.standard_name ? `user-supplier-name:${row.user_id}:${row.supplier_id || ""}:${normalizeSearch(row.standard_name)}:${normalizeSearch(row.brand)}:${normalizeSearch(row.size)}` : ""
+    ],
+    product_channel_mappings: [
+      (row) => row.user_id && row.internal_product_id && row.channel
+        ? `channel-map:${row.user_id}:${row.internal_product_id}:${row.channel}:${row.channel_variant_id || ""}:${row.channel_sku || ""}:${row.barcode || ""}`
+        : ""
+    ],
+    supplier_product_mappings: [
+      (row) => row.user_id && row.normalized_invoice_product_name
+        ? `supplier-map:${row.user_id}:${row.supplier_id || ""}:${row.normalized_invoice_product_name}:${row.supplier_product_code || ""}`
+        : ""
+    ],
+    mock_loyverse_catalog: [
+      (row) => row.user_id && row.mock_loyverse_item_id && row.mock_loyverse_variant_id
+        ? `mock-loyverse:${row.user_id}:${row.mock_loyverse_item_id}:${row.mock_loyverse_variant_id}`
+        : ""
+    ]
+  };
+  return keyFns[table] || [];
+}
+
+function mergeDuplicateRows(rows, keyFn) {
+  const byKey = new Map();
+  const ordered = [];
+  rows.forEach((row) => {
+    if (!row) return;
+    const key = keyFn(row);
+    if (!key) {
+      ordered.push(row);
+      return;
+    }
+    if (!byKey.has(key)) {
+      byKey.set(key, row);
+      ordered.push(row);
+      return;
+    }
+    const existing = byKey.get(key);
+    const merged = mergeSupabaseRows(existing, row);
+    byKey.set(key, merged);
+    const index = ordered.indexOf(existing);
+    if (index >= 0) ordered[index] = merged;
+  });
+  return ordered;
+}
+
+function mergeSupabaseRows(existing, incoming) {
+  const merged = { ...existing, ...incoming };
+  if (existing.metadata || incoming.metadata) {
+    merged.metadata = {
+      ...(existing.metadata || {}),
+      ...(incoming.metadata || {})
+    };
+  }
+  return merged;
+}
+
+function tableOperationError(table, operation, error) {
+  const message = error?.message || String(error || "未知错误");
+  if (message.startsWith(`Supabase ${operation} 失败：${table}。`)) return error;
+  return new Error(`Supabase ${operation} 失败：${table}。${message}`);
 }
 
 function appStatePayload() {
@@ -1709,7 +1804,10 @@ async function recognizeUploadedFile() {
     els.resultBox.innerHTML = "<p>AI/OCR 正在读取凭证...</p>";
 
     const formData = new FormData();
-    files.forEach((file) => formData.append("file", file));
+    files.forEach((file, index) => {
+      const extension = file.type?.split("/")?.[1] || "jpg";
+      formData.append("file", file, file.name || `upload-${index + 1}.${extension}`);
+    });
     formData.append("direction", ocrDirectionForSelectedDirection());
 
     const response = await fetch("/api/ocr", {

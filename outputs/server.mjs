@@ -226,7 +226,10 @@ async function handleOcr(req, res) {
 
   const body = await readRequestBody(req, 20 * 1024 * 1024);
   const parts = parseMultipart(body, contentType);
-  const files = parts.filter((part) => part.name === "file" && part.filename).slice(0, 2);
+  const files = parts.filter((part) => part.name === "file" && part.data?.length).map((part, index) => ({
+    ...part,
+    filename: part.filename || `upload-${index + 1}`
+  })).slice(0, 2);
   const direction = parts.find((part) => part.name === "direction")?.text || "outgoing";
 
   if (!files.length) {
